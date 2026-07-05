@@ -1,8 +1,30 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const { GoogleAIFileManager } = require('@google/generative-ai/server');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+
+const GEMINI_MODEL = 'gemini-3.5-flash';
+const API_TIMEOUT_MS = 35000; // 35 seconds timeout for generative requests
+
+const safetySettings = [
+  { 
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT, 
+    threshold: HarmBlockThreshold.BLOCK_NONE 
+  },
+  { 
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, 
+    threshold: HarmBlockThreshold.BLOCK_NONE 
+  },
+  { 
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, 
+    threshold: HarmBlockThreshold.BLOCK_NONE 
+  },
+  { 
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, 
+    threshold: HarmBlockThreshold.BLOCK_NONE 
+  }
+];
 
 class GeminiHandler {
   constructor(client) {
@@ -86,7 +108,19 @@ class GeminiHandler {
     });
   }
 
-  async transcribeReel(instagramId, reelUrl) {
+  async withTimeout(promise, timeoutMs) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`API operation timeout after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
+  }
+
+  async transcribeReel(instagramId, reelUrl, retries = 2) {
     if (!this.genAI || !this.fileManager) {
       throw new Error('Gemini API is not initialized. Please configure GEMINI_API_KEY.');
     }
@@ -106,7 +140,6 @@ class GeminiHandler {
         displayName: `Reel_${instagramId}`,
       });
       
-      // Store reference to Google AI file name for cleanup
       uploadedFileName = uploadResult.file.name;
       const fileUri = uploadResult.file.uri;
       console.log(`[GEMINI] Uploaded. File Name: ${uploadedFileName}, URI: ${fileUri}`);
@@ -173,7 +206,8 @@ class GeminiHandler {
       };
 
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: GEMINI_MODEL,
+        safetySettings,
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: responseSchema
@@ -185,15 +219,19 @@ class GeminiHandler {
       If there is workout/exercise data, populate workoutDetails. 
       Provide timetableSuggestions for scheduling this into the user's weekly routine.`;
 
-      const result = await model.generateContent([
-        {
-          fileData: {
-            mimeType: file.mimeType,
-            fileUri: file.uri,
+      // Run generative request with timeout protection
+      const result = await this.withTimeout(
+        model.generateContent([
+          {
+            fileData: {
+              mimeType: file.mimeType,
+              fileUri: file.uri,
+            },
           },
-        },
-        { text: prompt },
-      ]);
+          { text: prompt },
+        ]),
+        API_TIMEOUT_MS
+      );
 
       const responseText = result.response.text();
       console.log('[GEMINI] Received structured JSON response');
@@ -202,6 +240,13 @@ class GeminiHandler {
       return parsedNote;
     } catch (error) {
       console.error('[GEMINI] Error transcribing Reel:', error);
+      
+      // Retry logic for transient network or timeout issues
+      if (retries > 0) {
+        console.log(`[GEMINI] Retrying transcription... (${retries} attempts left)`);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return this.transcribeReel(instagramId, reelUrl, retries - 1);
+      }
       throw error;
     } finally {
       // 1. Guaranteed Google AI Storage cleanup (avoids quota leaks)
@@ -225,7 +270,10 @@ class GeminiHandler {
     }
 
     try {
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = this.genAI.getGenerativeModel({ 
+        model: GEMINI_MODEL,
+        safetySettings 
+      });
       
       const timetableStr = userTimetable && userTimetable.length > 0 
         ? userTimetable.map(act => `- [${act.day} ${act.time}] ${act.activity} (Notes: ${act.notes || 'none'})`).join('\n')
@@ -251,7 +299,12 @@ class GeminiHandler {
 
       contents.push({ role: 'user', parts: [{ text: latestInput }] });
 
-      const result = await model.generateContent({ contents });
+      // Run chatbot query with timeout protection
+      const result = await this.withTimeout(
+        model.generateContent({ contents }),
+        API_TIMEOUT_MS
+      );
+      
       return result.response.text();
     } catch (error) {
       console.error('[GEMINI] Chat model error:', error);

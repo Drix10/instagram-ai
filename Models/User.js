@@ -14,6 +14,9 @@ const ReminderSchema = new mongoose.Schema({
   active: { type: Boolean, default: true }
 });
 
+// Compound index on reminder subdocument fields to speed up recurring alerts checks
+ReminderSchema.index({ time: 1, active: 1 });
+
 const UserSchema = new mongoose.Schema({
   instagramId: { type: String, required: true, unique: true },
   username: { type: String },

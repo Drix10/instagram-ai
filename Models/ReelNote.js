@@ -24,8 +24,11 @@ const ReelNoteSchema = new mongoose.Schema({
     exercises: [ExerciseSchema]
   },
   timetableSuggestions: [TimetableSuggestionSchema],
-  saved: { type: Boolean, default: false }, // Filter out transient transcriptions from user notes list
+  saved: { type: Boolean, default: false }, 
   savedAt: { type: Date, default: Date.now }
 });
+
+// Compound index on query keys to optimize notes listing history queries
+ReelNoteSchema.index({ instagramId: 1, saved: 1, savedAt: -1 });
 
 module.exports = mongoose.model('ReelNote', ReelNoteSchema);

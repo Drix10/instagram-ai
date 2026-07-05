@@ -4,42 +4,61 @@ const ReelNote = require('../Models/ReelNote');
 class MessageHandler {
   constructor(client) {
     this.client = client;
-    this.processingQueue = [];
-    this.isProcessing = false;
+    this.userQueues = new Map(); // userId -> Array of messages (Per-user sequential queuing)
   }
 
   async processMessage(message) {
-    if (this.processingQueue.length < 100) {
-      this.processingQueue.push(message);
-      setImmediate(() => this.processNextInQueue());
-      return true;
+    const userId = message.sender.id;
+
+    // Retrieve or create a message queue for this specific user
+    if (!this.userQueues.has(userId)) {
+      this.userQueues.set(userId, []);
+      this.userQueues.get(userId).push(message);
+      
+      // Start async processing loop for this user
+      setImmediate(() => this.processUserQueue(userId));
     } else {
-      console.warn(`[INSTAGRAM] Message queue full, dropping message from ${message.sender?.id}`);
-      this.client.sendMessage(
-        message.sender.id,
-        "System is experiencing high traffic. Please try again in a moment."
-      ).catch(() => { });
-      return false;
+      const queue = this.userQueues.get(userId);
+      // Enforce a sensible queue buffer limit per user to protect memory (e.g., 50 pending messages per user)
+      if (queue.length < 50) {
+        queue.push(message);
+      } else {
+        console.warn(`[MESSAGE_ROUTER] Per-user queue full for ${userId}. Dropping message.`);
+        this.client.sendMessage(
+          userId,
+          "Please slow down. You are sending messages too quickly! ⏳"
+        ).catch(() => {});
+      }
     }
+    return true;
   }
 
-  async processNextInQueue() {
-    if (this.isProcessing || this.processingQueue.length === 0) return;
+  async processUserQueue(userId) {
+    const queue = this.userQueues.get(userId);
+    if (!queue || queue.length === 0) {
+      this.userQueues.delete(userId);
+      return;
+    }
 
-    this.isProcessing = true;
-    const message = this.processingQueue.shift();
+    // Peek at the first message in the queue
+    const message = queue[0];
 
     try {
       await this._processMessage(message);
     } catch (error) {
-      console.error('[INSTAGRAM] Error processing Instagram message:', error);
+      console.error(`[MESSAGE_ROUTER] Error processing message for user ${userId}:`, error);
       try {
-        this.client.sendMessage(message.sender.id, 'An error occurred while processing your message.');
-      } catch (e) { }
+        await this.client.sendMessage(userId, 'An error occurred while processing your message.');
+      } catch (e) {}
     } finally {
-      this.isProcessing = false;
-      if (this.processingQueue.length > 0) {
-        setImmediate(() => this.processNextInQueue());
+      // Remove the message we just processed
+      queue.shift();
+      
+      // Schedule the next message for this user recursively
+      if (queue.length > 0) {
+        setImmediate(() => this.processUserQueue(userId));
+      } else {
+        this.userQueues.delete(userId);
       }
     }
   }
@@ -149,7 +168,6 @@ class MessageHandler {
     const text = message.text.trim();
 
     if (text.startsWith(this.client.prefix) || isPostback) {
-      // Parse command name and arguments
       let commandName;
       let args = [];
 
@@ -158,7 +176,6 @@ class MessageHandler {
         cleanText = cleanText.substring(this.client.prefix.length);
       }
 
-      // Check if command has parameter payload split (e.g. save_note:id)
       if (cleanText.includes(':')) {
         const parts = cleanText.split(':');
         commandName = parts[0].toLowerCase();
@@ -178,10 +195,9 @@ class MessageHandler {
     // 4. NLP Chatbot Mode - Route direct conversation to Gemini Assistant
     if (text.length > 0) {
       try {
-        // Show typing indicator or friendly placeholder
         const response = await this.client.geminiHandler.generateChatResponse(
           user.timetable,
-          [], // Conversational history can be added here
+          [], 
           text
         );
         await this.client.sendMessage(instagramId, response);

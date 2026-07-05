@@ -4,6 +4,16 @@ class RateLimiter {
     this.resetRateLimits();
     this.userRateLimits = new Map();
     this.lastRateLimitHit = 0;
+
+    // Guaranteed background interval cleanup once a minute to prevent memory leaks under high loads
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupOldEntries(Date.now());
+    }, 60 * 1000);
+
+    // Unref the timer so that Node can exit cleanly if the server is stopped
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref();
+    }
   }
 
   resetRateLimits() {
@@ -60,11 +70,6 @@ class RateLimiter {
   canProcess(userId) {
     const now = Date.now();
 
-    // Clean up old rate limit entries
-    if (now % 100 === 0) {
-      this.cleanupOldEntries(now);
-    }
-
     // Check user rate limits
     if (this.userRateLimits.has(userId)) {
       const userData = this.userRateLimits.get(userId);
@@ -109,4 +114,4 @@ class RateLimiter {
   }
 }
 
-module.exports = RateLimiter; 
+module.exports = RateLimiter;

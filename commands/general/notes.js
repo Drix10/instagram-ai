@@ -2,7 +2,7 @@ const ReelNote = require('../../Models/ReelNote');
 
 module.exports = {
   name: 'notes',
-  description: 'List or view your saved Reel transcriptions',
+  description: 'List or view your saved Reel study notes/resources',
   usage: '[view <index>]',
   cooldown: 5,
   aliases: ['note', 'transcripts'],
@@ -37,17 +37,15 @@ module.exports = {
 
         let fullText = `📝 【REEL DETAIL NOTES】 📝\n\n` +
           `📌 Title: ${note.title}\n` +
-          `📂 Category: ${note.category?.toUpperCase() || 'NOTE'}\n\n` +
+          `📂 Category: ${note.category?.toUpperCase() || 'RESOURCE'}\n\n` +
           `💡 Summary:\n${note.summary}\n`;
 
-        if (note.workoutDetails?.exercises?.length > 0) {
-          fullText += `\n💪 Exercises Extracted:\n`;
-          note.workoutDetails.exercises.forEach(ex => {
-            const setsStr = ex.sets > 0 ? `${ex.sets} sets` : '';
-            const repsStr = ex.reps > 0 ? `${ex.reps} reps` : '';
-            const spec = [setsStr, repsStr].filter(x => x).join(' x ');
-            const noteStr = ex.notes ? ` (${ex.notes})` : '';
-            fullText += `• ${ex.name} ${spec ? `- ${spec}` : ''}${noteStr}\n`;
+        if (note.resourceDetails?.resources?.length > 0) {
+          fullText += `\n📦 Resources & Steps Extracted:\n`;
+          note.resourceDetails.resources.forEach(res => {
+            const typeStr = res.type ? ` [${res.type}]` : '';
+            const descStr = res.description ? `: ${res.description}` : '';
+            fullText += `• *${res.name}*${typeStr}${descStr}\n`;
           });
         }
 
@@ -69,16 +67,16 @@ module.exports = {
         return client.sendMessage(
           instagramId,
           `📂 Your saved Reel notes list is empty!\n\n` +
-          `Try sending a fitness Reel here and click "Save Note" on the returned summary card! 📲`
+          `Try sending a learning Reel here and click "Save Note" on the returned summary card! 📲`
         );
       }
 
       let listText = `📂 【SAVED REEL NOTES】 📂\n\n`;
       notes.forEach((note, index) => {
-        listText += `${index + 1}. [${note.category?.toUpperCase() || 'NOTE'}] ${note.title}\n`;
+        listText += `${index + 1}. [${note.category?.toUpperCase() || 'RESOURCE'}] ${note.title}\n`;
       });
 
-      listText += `\n💡 Type "!notes view <index>" to view full exercises or details.`;
+      listText += `\n💡 Type "!notes view <index>" to view full resource details.`;
 
       await client.sendMessage(instagramId, listText);
     } catch (error) {

@@ -1,4 +1,5 @@
 const User = require('../Models/User');
+const ReelNote = require('../Models/ReelNote');
 
 class CoreClient {
   constructor() {
@@ -47,7 +48,7 @@ class CoreClient {
         console.log('[INSTAGRAM] Token validation successful. Ready to process messages.');
       }
 
-      // Start background reminder alert loop
+      // Start background reminder & blocker check alert loop
       this.startReminderAlertLoop();
     } catch (error) {
       console.error('[INSTAGRAM] Error during initialization:', error);
@@ -82,21 +83,22 @@ class CoreClient {
     return await this.apiHandler.sendCarouselTemplate(recipientId, elements);
   }
 
-  // Periodic MongoDB query check to trigger due reminders.
+  // Periodic MongoDB query check to trigger due reminders and completed exam blocker notifications.
   // Uses recursive setTimeout instead of setInterval to avoid overlapping queries.
   startReminderAlertLoop() {
-    console.log('[REMINDERS] Starting background reminder alerts check...');
+    console.log('[REMINDERS] Starting background scheduler loop checks...');
     
-    const checkReminders = async () => {
+    const checkScheduler = async () => {
       try {
         const now = new Date();
-        // Find users with active reminders that are due
-        const users = await User.find({
+
+        // Part 1: Process Due Reminders
+        const usersWithReminders = await User.find({
           'reminders.time': { $lte: now },
           'reminders.active': true
         });
 
-        for (const user of users) {
+        for (const user of usersWithReminders) {
           let updated = false;
           for (const reminder of user.reminders) {
             if (reminder.active && reminder.time <= now) {
@@ -105,7 +107,7 @@ class CoreClient {
               // Send alert message in DMs
               await this.sendMessage(
                 user.instagramId,
-                `⏰ 【REMINDER ALERT】 ⏰\n\nHey! Time to do your scheduled activity:\n💪 *${reminder.activity}*\n\nLet's get it done! ⚡️`
+                `⏰ 【REMINDER ALERT】 ⏰\n\nHey! Time for your scheduled activity:\n📚 *${reminder.activity}*\n\nLet's get it done! ⚡️`
               ).catch(err => {
                 console.error(`[REMINDERS] Failed to send reminder DM to ${user.instagramId}:`, err.message);
               });
@@ -125,16 +127,62 @@ class CoreClient {
             await user.save();
           }
         }
+
+        // Part 2: Process Finished Blockers / Exams
+        const usersWithExams = await User.find({
+          'blockers.endDate': { $lte: now },
+          'blockers.notified': false
+        });
+
+        for (const user of usersWithExams) {
+          let updated = false;
+          for (const blocker of user.blockers) {
+            if (!blocker.notified && blocker.endDate <= now) {
+              console.log(`[BLOCKER] Blocker "${blocker.name}" completed for user ${user.instagramId}. Notifying.`);
+              blocker.notified = true;
+              updated = true;
+
+              // Find up to 3 saved learning resources/notes this user wanted to refer to
+              const savedNotes = await ReelNote.find({ 
+                instagramId: user.instagramId, 
+                saved: true 
+              }).sort({ savedAt: -1 }).limit(3);
+
+              let endMsg = `🎓 【DEADLINE / EXAM NOTIFICATION】 🎓\n\n` +
+                `Woohoo! You are done with your *${blocker.name}* now! 🎉🚀\n` +
+                `You can finally start learning something new!\n\n`;
+
+              if (savedNotes.length > 0) {
+                endMsg += `Here are the resources you saved earlier to refer to:\n\n`;
+                savedNotes.forEach((note, index) => {
+                  endMsg += `${index + 1}. *${note.title}* (${note.category || 'resource'})\n` +
+                    `   💡 Summary: ${note.summary.length > 120 ? note.summary.substring(0, 117) + '...' : note.summary}\n\n`;
+                });
+                endMsg += `💡 Type "!notes" to view full references.`;
+              } else {
+                endMsg += `Share educational Reels here to transcribe and save resources to your study board! 📲📚`;
+              }
+
+              await this.sendMessage(user.instagramId, endMsg).catch(err => {
+                console.error(`[BLOCKER] Failed to send blocker completion DM to ${user.instagramId}:`, err.message);
+              });
+            }
+          }
+          if (updated) {
+            await user.save();
+          }
+        }
+
       } catch (error) {
-        console.error('[REMINDERS] Error checking active reminders loop:', error);
+        console.error('[REMINDERS] Error in scheduler checks loop:', error);
       } finally {
         // Schedule the next check in 60 seconds, ensuring no overlapping queries
-        setTimeout(checkReminders, 60 * 1000);
+        setTimeout(checkScheduler, 60 * 1000);
       }
     };
 
     // Run the first check after 60 seconds
-    setTimeout(checkReminders, 60 * 1000);
+    setTimeout(checkScheduler, 60 * 1000);
   }
 }
 

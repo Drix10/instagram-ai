@@ -2,10 +2,10 @@ const User = require('../../Models/User');
 
 module.exports = {
   name: 'timetable',
-  description: 'View or clear your weekly timetable',
+  description: 'View or clear your weekly study/learning timetable',
   usage: '[clear]',
   cooldown: 5,
-  aliases: ['schedule', 'routine'],
+  aliases: ['schedule', 'routines'],
   requiresAuth: true,
 
   async execute(client, message, args) {
@@ -14,7 +14,7 @@ module.exports = {
       const user = await User.findOne({ instagramId });
 
       if (!user) {
-        return client.sendMessage(instagramId, 'You need to be registered to check your timetable! Send !register first.');
+        return client.sendMessage(instagramId, 'You need to be registered first! Send !register to get started.');
       }
 
       // Handle "clear" argument
@@ -24,43 +24,57 @@ module.exports = {
         return client.sendMessage(instagramId, '🧹 Your weekly timetable has been cleared successfully.');
       }
 
-      // Group timetable activities by day
       if (!user.timetable || user.timetable.length === 0) {
         return client.sendMessage(
-          instagramId, 
+          instagramId,
           `📅 Your Weekly Timetable is empty!\n\n` +
-          `How to populate:\n` +
-          `1️⃣ Share a workout Reel with me 📲\n` +
-          `2️⃣ Click "Add to Timetable" on the transcription card! ⚡️`
+          `How to build your routine:\n` +
+          `1️⃣ Share an educational or learning Reel with me 📲\n` +
+          `2️⃣ Click "Add to Timetable" on the transcription card to map it to your week! ⏰`
         );
       }
 
+      // Group activities by day of the week
       const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-      let scheduleText = `📅 【WEEKLY TIMETABLE】 📅\n`;
-      
+      let timetableText = `📅 【WEEKLY TIMETABLE】 📅\n\n`;
       let hasActivities = false;
+
       daysOfWeek.forEach(day => {
         const activities = user.timetable.filter(act => act.day.toLowerCase() === day.toLowerCase());
         if (activities.length > 0) {
           hasActivities = true;
-          scheduleText += `\n🔴 *${day}*:\n`;
-          activities.sort((a, b) => a.time.localeCompare(b.time));
-          activities.forEach(act => {
-            scheduleText += `  • [${act.time}] ${act.activity}${act.notes ? ` (${act.notes})` : ''}\n`;
+          // Sort activities by time
+          activities.sort((a, b) => {
+            if (!a.time) return 1;
+            if (!b.time) return -1;
+            return a.time.localeCompare(b.time);
           });
+
+          timetableText += `*${day.toUpperCase()}*:\n`;
+          activities.forEach(act => {
+            const timeStr = act.time ? ` [${act.time}]` : '';
+            const noteStr = act.notes ? ` (${act.notes})` : '';
+            timetableText += `  •${timeStr} ${act.activity}${noteStr}\n`;
+          });
+          timetableText += `\n`;
         }
       });
 
       if (!hasActivities) {
-        scheduleText += '\nNo activities found.';
+        // Fallback for custom day mappings not matched in standard array
+        timetableText += `Custom Schedules:\n`;
+        user.timetable.forEach(act => {
+          const timeStr = act.time ? ` [${act.time}]` : '';
+          timetableText += `  • [${act.day}]${timeStr} ${act.activity}\n`;
+        });
+        timetableText += `\n`;
       }
 
-      scheduleText += `\n\n💡 Type "!timetable clear" to clear your routine.`;
-
-      await client.sendMessage(instagramId, scheduleText);
+      timetableText += `💡 Type "!timetable clear" to empty your schedule.`;
+      await client.sendMessage(instagramId, timetableText);
     } catch (error) {
       console.error('[COMMANDS] Error in timetable command:', error);
-      await client.sendMessage(message.sender.id, 'An error occurred while fetching your timetable. Please try again.');
+      await client.sendMessage(message.sender.id, 'An error occurred while fetching your timetable.');
     }
   }
 };

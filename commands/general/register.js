@@ -2,24 +2,23 @@ const User = require('../../Models/User');
 
 module.exports = {
   name: 'register',
-  description: 'Register with the Reel notes and workout timetable bot',
+  description: 'Register with the Reel notes and learning scheduler bot',
   usage: '',
   cooldown: 5,
-  aliases: ['reg', 'start'],
-  requiresAuth: false,
+  aliases: ['signup'],
 
   async execute(client, message, args) {
     try {
       const instagramId = message.sender.id;
-      let username = message.sender.username || 'user';
+      const username = message.sender.username || 'user';
 
       let user = await User.findOne({ instagramId });
 
       if (user) {
         return client.sendMessage(
-          instagramId,
-          `👋 Welcome back, ${username}! You're already registered.\n\n` +
-          `Try sending (sharing) a fitness Reel with me to transcribe it, or type !help to check commands! 🏋️‍♂️✨`
+          instagramId, 
+          `👋 Hello @${username}! You are already registered.\n\n` +
+          `Try sharing a learning or educational Reel with me directly to generate study schedules and notes! 📝`
         );
       }
 
@@ -27,23 +26,22 @@ module.exports = {
         instagramId,
         username
       });
+
       await user.save();
 
-      await client.sendMessage(
-        instagramId,
-        `🎉 Registration successful! Welcome to Reel Notes & Timetable Bot! 🎉\n\n` +
-        `How it works:\n` +
-        `1️⃣ Share any fitness or workout Reel directly to our DMs 📲\n` +
-        `2️⃣ Our AI will automatically download, watch, and transcribe the exercises 🤖🎥\n` +
-        `3️⃣ Click the buttons to add the workout to your Weekly Timetable or Set Reminders! 📅🔔\n\n` +
-        `You can also just type normal messages to chat with me about workouts!`
-      );
+      const welcomeMsg = `🎉 Welcome to your AI Learning & Timetable Manager, @${username}! 🎉\n\n` +
+        `I will help you transcribe study Reels, save learning resources, and organize your weekly schedules.\n\n` +
+        `💡 *How to use:* \n` +
+        `1️⃣ Share any educational, tutorial, or resource Reel directly to our DMs 📲\n` +
+        `2️⃣ Wait for Gemini AI to transcribe the summary, steps, and resources\n` +
+        `3️⃣ Click the buttons to add the resources to your Weekly Timetable or Set Reminders! 📅🔔\n` +
+        `4️⃣ Set exam/blocker deadlines with "!deadline add [name] [YYYY-MM-DD]". When the exam ends, I'll remind you to start learning again! 🎓\n\n` +
+        `You can also just type normal messages to chat with me about your learning schedule! Let's build something great! 🚀`;
+
+      await client.sendMessage(instagramId, welcomeMsg);
     } catch (error) {
       console.error('[COMMANDS] Error in register command:', error);
-      await client.sendMessage(
-        message.sender.id,
-        'Sorry, I hit a snag while trying to register your account. Please try again in a moment!'
-      );
+      await client.sendMessage(message.sender.id, 'An error occurred during registration. Please try again.');
     }
   }
 };

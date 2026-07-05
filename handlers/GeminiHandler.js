@@ -159,29 +159,28 @@ class GeminiHandler {
       }
       console.log('[GEMINI] Video processing completed. Generating structured note...');
 
-      // Configure structured JSON schema response
+      // Configure structured JSON schema response (General Study/Project/Resource Scheduler)
       const responseSchema = {
         type: 'OBJECT',
         properties: {
-          title: { type: 'STRING', description: 'What is this video/reel about? E.g., Bench Press Routine' },
-          summary: { type: 'STRING', description: 'Brief transcription and summary of the key tips, steps, or advice shown in the reel.' },
+          title: { type: 'STRING', description: 'What is this video/reel about? E.g., Learn SQL in 10 Days' },
+          summary: { type: 'STRING', description: 'Brief transcription and summary of the key tips, steps, links, or advice shown in the reel.' },
           category: { 
             type: 'STRING', 
-            enum: ['workout', 'note', 'recipe', 'coding', 'other'], 
+            enum: ['study', 'project', 'resource', 'tips', 'other'], 
             description: 'The category that matches the reel contents.' 
           },
-          workoutDetails: {
+          resourceDetails: {
             type: 'OBJECT',
             properties: {
-              exercises: {
+              resources: {
                 type: 'ARRAY',
                 items: {
                   type: 'OBJECT',
                   properties: {
-                    name: { type: 'STRING', description: 'Exercise name, e.g. Incline Bench Press' },
-                    sets: { type: 'INTEGER', description: 'Number of sets recommended. Put 0 if not specified.' },
-                    reps: { type: 'INTEGER', description: 'Number of reps recommended. Put 0 if not specified.' },
-                    notes: { type: 'STRING', description: 'Notes or weight suggestions.' }
+                    name: { type: 'STRING', description: 'Resource, book, website, tool, or step name, e.g. React Docs' },
+                    type: { type: 'STRING', description: 'Type of resource: book, link, tool, step, video, custom' },
+                    description: { type: 'STRING', description: 'Description or notes about this specific resource/step.' }
                   },
                   required: ['name']
                 }
@@ -193,9 +192,9 @@ class GeminiHandler {
             items: {
               type: 'OBJECT',
               properties: {
-                day: { type: 'STRING', description: 'Recommended day of the week, e.g. Monday, Tuesday. Choose a logical day if none is mentioned.' },
-                time: { type: 'STRING', description: 'Recommended time of the day in 24h format, e.g., 08:00, 18:30. Default to 08:00 if not specified.' },
-                activity: { type: 'STRING', description: 'Activity description.' },
+                day: { type: 'STRING', description: 'Recommended day of the week to study/work on this, e.g. Monday, Tuesday. Choose a logical day if none is mentioned.' },
+                time: { type: 'STRING', description: 'Recommended time of the day in 24h format, e.g., 09:00, 15:30. Default to 09:00 if not specified.' },
+                activity: { type: 'STRING', description: 'Learning activity description.' },
                 notes: { type: 'STRING', description: 'Any extra notes.' }
               },
               required: ['day', 'activity']
@@ -214,10 +213,10 @@ class GeminiHandler {
         }
       });
 
-      const prompt = `Analyze this Instagram Reel video. Transcribe the spoken text or text overlays. Extract the main workout routines, educational notes, or tasks shown. 
+      const prompt = `Analyze this Instagram Reel video. Transcribe the spoken text or text overlays. Extract the main educational tips, learning steps, resources, links, or tasks shown. 
       Format the output as a structured JSON object according to the schema. 
-      If there is workout/exercise data, populate workoutDetails. 
-      Provide timetableSuggestions for scheduling this into the user's weekly routine.`;
+      If there is resource/learning data, populate resourceDetails. 
+      Provide timetableSuggestions for scheduling this into the user's weekly timetable structure.`;
 
       // Run generative request with timeout protection
       const result = await this.withTimeout(
@@ -264,7 +263,7 @@ class GeminiHandler {
     }
   }
 
-  async generateChatResponse(userTimetable, chatHistory, latestInput) {
+  async generateChatResponse(userTimetable, chatHistory, latestInput, userBlockers = []) {
     if (!this.genAI) {
       return "I can't chat right now because the Gemini API is not configured. Please add GEMINI_API_KEY in settings.";
     }
@@ -276,13 +275,20 @@ class GeminiHandler {
       });
       
       const timetableStr = userTimetable && userTimetable.length > 0 
-        ? userTimetable.map(act => `- [${act.day} ${act.time}] ${act.activity} (Notes: ${act.notes || 'none'})`).join('\n')
+        ? userTimetable.map(act => `- [${act.day} ${act.time || 'Anytime'}] ${act.activity} (Notes: ${act.notes || 'none'})`).join('\n')
         : 'No scheduled activities in the weekly timetable.';
 
-      const systemPrompt = `You are a supportive, knowledgeable AI fitness and personal schedule assistant. 
-      You help the user stay on track with their workout timetable and notes.
+      const blockersStr = userBlockers && userBlockers.length > 0
+        ? userBlockers.map(b => `- [${b.name}] Ends on ${new Date(b.endDate).toDateString()} (Active: ${!b.notified})`).join('\n')
+        : 'No current blocker deadlines (e.g. exams) configured.';
+
+      const systemPrompt = `You are a supportive, knowledgeable AI personal schedule, study helper, and resource assistant. 
+      You help the user stay on track with their learning timetable, deadlines, and notes.
       Here is the user's CURRENT WEEKLY TIMETABLE:\n${timetableStr}\n\n
-      Answer the user's query concisely and helpfully, using their timetable context. If they ask to add something or check reminders, explain how they can use commands like !timetable or share fitness Reels.`;
+      Here are their ACTIVE BLOCKERS/EXAM DEADLINES:\n${blockersStr}\n\n
+      Answer the user's query concisely and helpfully, using their timetable and blockers context. 
+      If they ask to add deadlines, show schedules, or view notes, explain how they can use commands like !timetable, !deadline, or share learning Reels.
+      If they have exams/blockers going on, support them, and reassure them they can start learning new things once their exam deadlines are completed!`;
 
       const contents = [
         { role: 'user', parts: [{ text: systemPrompt }] },

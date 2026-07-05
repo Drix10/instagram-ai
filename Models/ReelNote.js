@@ -1,10 +1,9 @@
 const mongoose = require('mongoose');
 
-const ExerciseSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  sets: { type: Number },
-  reps: { type: Number },
-  notes: { type: String }
+const ResourceSchema = new mongoose.Schema({
+  name: { type: String, required: true }, // e.g. "Github Repo Link" or "VS Code Extension"
+  type: { type: String }, // e.g. "link", "tool", "step", "book"
+  description: { type: String }
 });
 
 const TimetableSuggestionSchema = new mongoose.Schema({
@@ -19,9 +18,9 @@ const ReelNoteSchema = new mongoose.Schema({
   reelUrl: { type: String, required: true },
   title: { type: String, required: true },
   summary: { type: String, required: true },
-  category: { type: String, enum: ['workout', 'note', 'recipe', 'coding', 'other'], default: 'note' },
-  workoutDetails: {
-    exercises: [ExerciseSchema]
+  category: { type: String, enum: ['study', 'project', 'resource', 'tips', 'other'], default: 'resource' },
+  resourceDetails: {
+    resources: [ResourceSchema]
   },
   timetableSuggestions: [TimetableSuggestionSchema],
   saved: { type: Boolean, default: false }, 

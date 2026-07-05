@@ -19,7 +19,7 @@ class MessageHandler {
       setImmediate(() => this.processUserQueue(userId));
     } else {
       const queue = this.userQueues.get(userId);
-      // Enforce a sensible queue buffer limit per user to protect memory (e.g., 50 pending messages per user)
+      // Enforce a sensible queue buffer limit per user to protect memory
       if (queue.length < 50) {
         queue.push(message);
       } else {
@@ -92,7 +92,7 @@ class MessageHandler {
       try {
         await this.client.sendMessage(
           instagramId,
-          "📥 Reel received! Downloading and transcribing using Gemini AI... This can take 15-30 seconds. 🤖🎥"
+          "📥 Reel received! Downloading and transcribing details using Gemini AI... This can take 15-30 seconds. 🤖🎥"
         );
 
         const parsed = await this.client.geminiHandler.transcribeReel(instagramId, message.reelUrl);
@@ -103,8 +103,8 @@ class MessageHandler {
           reelUrl: message.reelUrl,
           title: parsed.title,
           summary: parsed.summary,
-          category: parsed.category || 'note',
-          workoutDetails: parsed.workoutDetails,
+          category: parsed.category || 'resource',
+          resourceDetails: parsed.resourceDetails,
           timetableSuggestions: parsed.timetableSuggestions
         });
         await note.save();
@@ -112,17 +112,15 @@ class MessageHandler {
         // Print transcription card
         let details = `📝 【REEL NOTES】 📝\n\n` +
           `📌 Topic: ${parsed.title}\n` +
-          `📂 Category: ${parsed.category?.toUpperCase() || 'NOTE'}\n\n` +
+          `📂 Category: ${parsed.category?.toUpperCase() || 'RESOURCE'}\n\n` +
           `💡 Summary:\n${parsed.summary}\n`;
 
-        if (parsed.category === 'workout' && parsed.workoutDetails?.exercises?.length > 0) {
-          details += `\n💪 Exercises Extracted:\n`;
-          parsed.workoutDetails.exercises.forEach(ex => {
-            const setsStr = ex.sets > 0 ? `${ex.sets} sets` : '';
-            const repsStr = ex.reps > 0 ? `${ex.reps} reps` : '';
-            const spec = [setsStr, repsStr].filter(x => x).join(' x ');
-            const noteStr = ex.notes ? ` (${ex.notes})` : '';
-            details += `• ${ex.name} ${spec ? `- ${spec}` : ''}${noteStr}\n`;
+        if (parsed.resourceDetails?.resources?.length > 0) {
+          details += `\n📦 Resources & Steps Extracted:\n`;
+          parsed.resourceDetails.resources.forEach(res => {
+            const typeStr = res.type ? ` [${res.type}]` : '';
+            const descStr = res.description ? `: ${res.description}` : '';
+            details += `• *${res.name}*${typeStr}${descStr}\n`;
           });
         }
 
@@ -131,7 +129,7 @@ class MessageHandler {
         // Send action buttons
         await this.client.sendButtonTemplate(
           instagramId,
-          `Would you like to save this to your routine?`,
+          `Would you like to save this to your timetable?`,
           {
             buttons: [
               {
@@ -192,13 +190,14 @@ class MessageHandler {
       }
     }
 
-    // 4. NLP Chatbot Mode - Route direct conversation to Gemini Assistant
+    // 4. NLP Chatbot Mode - Route direct conversation to Gemini Assistant with blocker context
     if (text.length > 0) {
       try {
         const response = await this.client.geminiHandler.generateChatResponse(
           user.timetable,
           [], 
-          text
+          text,
+          user.blockers
         );
         await this.client.sendMessage(instagramId, response);
       } catch (chatErr) {

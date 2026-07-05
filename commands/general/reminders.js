@@ -2,7 +2,7 @@ const User = require('../../Models/User');
 
 module.exports = {
   name: 'reminders',
-  description: 'View or clear your scheduled reminders',
+  description: 'View or clear your scheduled learning reminders',
   usage: '[clear]',
   cooldown: 5,
   aliases: ['alerts', 'reminder'],
@@ -21,7 +21,7 @@ module.exports = {
       if (args.length > 0 && args[0].toLowerCase() === 'clear') {
         user.reminders = [];
         await user.save();
-        return client.sendMessage(instagramId, '🧹 All active reminders have been cleared successfully.');
+        return client.sendMessage(instagramId, '🧹 All active alerts and reminders have been cleared successfully.');
       }
 
       const activeReminders = user.reminders.filter(rem => rem.active);
@@ -29,10 +29,10 @@ module.exports = {
       if (activeReminders.length === 0) {
         return client.sendMessage(
           instagramId,
-          `🔔 You have no active reminders!\n\n` +
+          `🔔 You have no active learning reminders!\n\n` +
           `How to set one:\n` +
-          `1️⃣ Share a fitness Reel with me 📲\n` +
-          `2️⃣ Click "Set Reminder" on the transcription card to schedule an exercise alert! ⏰`
+          `1️⃣ Share an educational Reel with me 📲\n` +
+          `2️⃣ Click "Set Reminder" on the transcription card to schedule a study alert! ⏰`
         );
       }
 
@@ -47,7 +47,7 @@ module.exports = {
           hour12: true
         });
         const repeatStr = rem.repeat !== 'none' ? ` (${rem.repeat})` : '';
-        alertsText += `${index + 1}. 💪 *${rem.activity}*\n   📅 Time: ${timeStr}${repeatStr}\n\n`;
+        alertsText += `${index + 1}. 📚 *${rem.activity}*\n   📅 Time: ${timeStr}${repeatStr}\n\n`;
       });
 
       alertsText += `💡 Type "!reminders clear" to clear all active reminders.`;

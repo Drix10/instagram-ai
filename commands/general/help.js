@@ -1,44 +1,30 @@
 module.exports = {
   name: 'help',
-  description: 'Show all available commands',
+  description: 'Display all available commands',
   usage: '',
   cooldown: 3,
   aliases: ['h', 'commands'],
-  requiresAuth: false,
 
   async execute(client, message, args) {
     const instagramId = message.sender.id;
-    
-    const helpText = `📚 【REEL BOT COMMANDS】 📚\n\n` +
-      `• ${client.prefix}register - Register your profile\n` +
-      `• ${client.prefix}timetable - View your weekly workout timetable\n` +
-      `• ${client.prefix}notes - List all transcribed notes & exercises\n` +
-      `• ${client.prefix}reminders - View your active reminder alerts\n\n` +
-      `💬 【AI CHATBOT】\n` +
-      `Simply type a message to chat with our AI fitness assistant. It has context on your saved timetable! 🏋️‍♂️🤖`;
+    const prefix = client.prefix;
 
-    try {
-      await client.sendButtonTemplate(instagramId, helpText, {
-        buttons: [
-          {
-            type: 'postback',
-            title: '📅 View Timetable',
-            payload: `${client.prefix}timetable`
-          },
-          {
-            type: 'postback',
-            title: '📂 View Notes',
-            payload: `${client.prefix}notes`
-          },
-          {
-            type: 'postback',
-            title: '🔔 View Reminders',
-            payload: `${client.prefix}reminders`
-          }
-        ]
-      });
-    } catch (err) {
-      await client.sendMessage(instagramId, helpText);
-    }
+    const helpMessage = 
+      `📚 【LEARNING MANAGER COMMANDS】 📚\n\n` +
+      `Here is a list of commands you can run:\n\n` +
+      `• ${prefix}register - Register your profile\n` +
+      `• ${prefix}timetable - View your weekly study/learning timetable\n` +
+      `• ${prefix}timetable clear - Clear all items from your timetable\n` +
+      `• ${prefix}notes - List your saved Reel notes & resources\n` +
+      `• ${prefix}notes view <index> - View detailed content of a saved note\n` +
+      `• ${prefix}reminders - View your scheduled learning reminder alerts\n` +
+      `• ${prefix}reminders clear - Clear all active reminders\n` +
+      `• ${prefix}deadline add <name> <date> - Add an exam or project blocker deadline (Date: YYYY-MM-DD or 3d)\n` +
+      `• ${prefix}deadline list - View all current blocker deadlines\n` +
+      `• ${prefix}deadline clear - Clear all exam blockers\n` +
+      `• ${prefix}ping - Test bot latency\n\n` +
+      `💡 *Tip*: Share any learning/educational Reel with me in this chat! I will watch, transcribe, and help you map it directly into your schedule! 📲🎥`;
+
+    await client.sendMessage(instagramId, helpMessage);
   }
 };

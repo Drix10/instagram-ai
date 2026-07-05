@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const axios = require('axios');
 const instagramClient = require('./instagram-client');
 
-// In-memory FIFO cache to deduplicate webhook events by Message ID (mid)
 const processedMidsSet = new Set();
 const processedMidsList = [];
 const MAX_PROCESSED_MIDS = 1000;
@@ -47,7 +46,6 @@ async function enablePageSubscriptions() {
   }
 }
 
-// Start page subscription setup when the bot starts
 (async () => {
   try {
     await instagramClient.init();
@@ -81,7 +79,6 @@ function verifyWebhook(req, res) {
 function validateSignature(req) {
   const appSecret = process.env.INSTAGRAM_APP_SECRET;
   if (!appSecret) {
-    // If not configured, bypass signature check for ease of development
     return true;
   }
 
@@ -109,7 +106,6 @@ function validateSignature(req) {
 }
 
 async function processWebhook(req, res) {
-  // Respond immediately to Meta to prevent retries (20-second timeout)
   res.status(200).send('EVENT_RECEIVED');
 
   try {
@@ -131,7 +127,6 @@ async function processWebhook(req, res) {
       if (entry.messaging && Array.isArray(entry.messaging)) {
         for (const messagingEvent of entry.messaging) {
           try {
-            // Deduplicate using message ID (mid)
             if (messagingEvent.message && messagingEvent.message.mid) {
               const mid = messagingEvent.message.mid;
               if (processedMidsSet.has(mid)) {
@@ -176,7 +171,6 @@ async function handleMessage(event) {
       console.warn('[WEBHOOK] Could not fetch profile username:', profileError.message);
     }
 
-    // Detect shared reels in message attachments
     let reelUrl = null;
     if (message.attachments && Array.isArray(message.attachments)) {
       const shareAttachment = message.attachments.find(att => att.type === 'share');

@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const GEMINI_MODEL = 'gemini-3.5-flash';
-const API_TIMEOUT_MS = 35000; // 35 seconds timeout for generative requests
+const API_TIMEOUT_MS = 35000;
 
 const safetySettings = [
   { 
@@ -37,7 +37,6 @@ class GeminiHandler {
       console.warn('[GEMINI] Missing GEMINI_API_KEY environment variable. AI features will not work.');
     }
     
-    // Create temp directory for downloading reels
     this.tempDir = path.join(__dirname, '../temp');
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
@@ -54,7 +53,7 @@ class GeminiHandler {
           url,
           method: 'GET',
           responseType: 'stream',
-          timeout: 45000, // 45s absolute request timeout
+          timeout: 45000,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
@@ -62,7 +61,7 @@ class GeminiHandler {
 
         stream = response.data;
         const contentLength = parseInt(response.headers['content-length'], 10);
-        const limitBytes = 35 * 1024 * 1024; // 35MB limit
+        const limitBytes = 35 * 1024 * 1024;
 
         if (!isNaN(contentLength) && contentLength > limitBytes) {
           writer.close();
@@ -144,7 +143,6 @@ class GeminiHandler {
       const fileUri = uploadResult.file.uri;
       console.log(`[GEMINI] Uploaded. File Name: ${uploadedFileName}, URI: ${fileUri}`);
 
-      // Poll until file processing is ACTIVE
       console.log('[GEMINI] Waiting for video processing to complete...');
       let file = await this.fileManager.getFile(uploadedFileName);
       let attempts = 0;
@@ -159,7 +157,6 @@ class GeminiHandler {
       }
       console.log('[GEMINI] Video processing completed. Generating structured note...');
 
-      // Configure structured JSON schema response (General Study/Project/Resource Scheduler)
       const responseSchema = {
         type: 'OBJECT',
         properties: {
@@ -218,7 +215,6 @@ class GeminiHandler {
       If there is resource/learning data, populate resourceDetails. 
       Provide timetableSuggestions for scheduling this into the user's weekly timetable structure.`;
 
-      // Run generative request with timeout protection
       const result = await this.withTimeout(
         model.generateContent([
           {
@@ -240,7 +236,6 @@ class GeminiHandler {
     } catch (error) {
       console.error('[GEMINI] Error transcribing Reel:', error);
       
-      // Retry logic for transient network or timeout issues
       if (retries > 0) {
         console.log(`[GEMINI] Retrying transcription... (${retries} attempts left)`);
         await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -248,14 +243,12 @@ class GeminiHandler {
       }
       throw error;
     } finally {
-      // 1. Guaranteed Google AI Storage cleanup (avoids quota leaks)
       if (uploadedFileName) {
         console.log(`[GEMINI] Cleaning up file from AI storage: ${uploadedFileName}...`);
         await this.fileManager.deleteFile(uploadedFileName).catch(err => {
           console.warn('[GEMINI] Error deleting file from AI storage:', err.message);
         });
       }
-      // 2. Guaranteed local disk cleanup (avoids disk filling leaks)
       if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
         console.log('[GEMINI] Cleaned up local temp file');
@@ -305,7 +298,6 @@ class GeminiHandler {
 
       contents.push({ role: 'user', parts: [{ text: latestInput }] });
 
-      // Run chatbot query with timeout protection
       const result = await this.withTimeout(
         model.generateContent({ contents }),
         API_TIMEOUT_MS

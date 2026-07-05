@@ -5,12 +5,10 @@ class RateLimiter {
     this.userRateLimits = new Map();
     this.lastRateLimitHit = 0;
 
-    // Guaranteed background interval cleanup once a minute to prevent memory leaks under high loads
     this.cleanupInterval = setInterval(() => {
       this.cleanupOldEntries(Date.now());
     }, 60 * 1000);
 
-    // Unref the timer so that Node can exit cleanly if the server is stopped
     if (this.cleanupInterval.unref) {
       this.cleanupInterval.unref();
     }
@@ -53,40 +51,33 @@ class RateLimiter {
   }
 
   canSendMessage() {
-    // If we've hit the rate limit in the last 15 minutes, cool down
     if (Date.now() - this.lastRateLimitHit < 15 * 60 * 1000) {
       return false;
     }
 
-    // Auto-reset every hour just in case
     if (Date.now() - this.lastReset > 60 * 60 * 1000) {
       this.resetRateLimits();
     }
 
-    // Check if we're approaching the rate limit
     return this.callPercent < (100 - this.bufferPercentage);
   }
 
   canProcess(userId) {
     const now = Date.now();
 
-    // Check user rate limits
     if (this.userRateLimits.has(userId)) {
       const userData = this.userRateLimits.get(userId);
 
-      // If user has sent more than 10 commands in the last 10 seconds
       if (userData.count >= 10 && now - userData.firstCommand < 10000) {
         console.log(`[RATE LIMITER] User ${userId} rate limited: ${userData.count} commands in ${Math.floor((now - userData.firstCommand) / 1000)}s`);
         return false;
       }
 
-      // If user has sent more than 3 commands in 1 second
       if (userData.count >= 3 && now - userData.firstCommand < 1000) {
         console.log(`[RATE LIMITER] User ${userId} rate limited: ${userData.count} commands in <1s`);
         return false;
       }
 
-      // Update user rate limit data
       if (userData.count === 1) {
         userData.firstCommand = now;
       }
@@ -94,7 +85,6 @@ class RateLimiter {
       userData.lastCommand = now;
       this.userRateLimits.set(userId, userData);
     } else {
-      // First command from this user
       this.userRateLimits.set(userId, {
         count: 1,
         firstCommand: now,

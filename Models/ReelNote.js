@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
 const ResourceSchema = new mongoose.Schema({
-  name: { type: String, required: true }, // e.g. "Github Repo Link" or "VS Code Extension"
-  type: { type: String }, // e.g. "link", "tool", "step", "book"
+  name: { type: String, required: true },
+  type: { type: String },
   description: { type: String }
 });
 
@@ -27,7 +27,6 @@ const ReelNoteSchema = new mongoose.Schema({
   savedAt: { type: Date, default: Date.now }
 });
 
-// Compound index on query keys to optimize notes listing history queries
 ReelNoteSchema.index({ instagramId: 1, saved: 1, savedAt: -1 });
 
 module.exports = mongoose.model('ReelNote', ReelNoteSchema);

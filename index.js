@@ -6,23 +6,19 @@ const { verifyWebhook, processWebhook, instagramClient } = require('./webhook-ha
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable raw body parser for signature validation
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf.toString();
   }
 }));
 
-// Webhook Routes
 app.get('/webhook', verifyWebhook);
 app.post('/webhook', processWebhook);
 
-// Basic health check route
 app.get('/', (req, res) => {
   res.send('Instagram Reel Timetable Bot is running 🚀');
 });
 
-// Database and Server Initialization
 async function startServer() {
   try {
     const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/timetable-bot';
@@ -30,7 +26,6 @@ async function startServer() {
     await mongoose.connect(mongoUri);
     console.log('[SERVER] Connected to MongoDB successfully');
 
-    // Initialize Instagram Client
     console.log('[SERVER] Initializing Instagram client...');
     await instagramClient.init();
 
@@ -43,7 +38,6 @@ async function startServer() {
   }
 }
 
-// Global error handlers
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[SERVER] Unhandled Rejection at:', promise, 'reason:', reason);
 });

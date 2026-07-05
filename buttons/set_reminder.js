@@ -8,10 +8,17 @@ function getNextDateForDayAndTime(dayName, timeStr) {
   const now = new Date();
   const resultDate = new Date();
   
-  // Parse time e.g., "18:30" or "08:00"
-  const timeParts = timeStr ? timeStr.split(':').map(Number) : [8, 0];
-  const hours = isNaN(timeParts[0]) ? 8 : timeParts[0];
-  const minutes = isNaN(timeParts[1]) ? 0 : timeParts[1];
+  // Parse time e.g., "18:30" or "08:00 AM" robustly
+  const timeParts = timeStr ? timeStr.split(':') : [];
+  let hours = 9;
+  let minutes = 0;
+  
+  if (timeParts.length >= 2) {
+    hours = parseInt(timeParts[0].replace(/\D/g, ''), 10);
+    minutes = parseInt(timeParts[1].replace(/\D/g, ''), 10);
+    if (isNaN(hours)) hours = 9;
+    if (isNaN(minutes)) minutes = 0;
+  }
   
   resultDate.setHours(hours, minutes, 0, 0);
 

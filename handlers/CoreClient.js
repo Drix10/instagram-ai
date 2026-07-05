@@ -129,47 +129,53 @@ class CoreClient {
         }
 
         // Part 2: Process Finished Blockers / Exams
+        // Find users who have at least one blocker that has ended and hasn't been notified
         const usersWithExams = await User.find({
           'blockers.endDate': { $lte: now },
           'blockers.notified': false
         });
 
         for (const user of usersWithExams) {
+          const completedBlockerNames = [];
           let updated = false;
+
           for (const blocker of user.blockers) {
             if (!blocker.notified && blocker.endDate <= now) {
-              console.log(`[BLOCKER] Blocker "${blocker.name}" completed for user ${user.instagramId}. Notifying.`);
+              console.log(`[BLOCKER] Blocker "${blocker.name}" completed for user ${user.instagramId}. Staging notification.`);
               blocker.notified = true;
+              completedBlockerNames.push(blocker.name);
               updated = true;
-
-              // Find up to 3 saved learning resources/notes this user wanted to refer to
-              const savedNotes = await ReelNote.find({ 
-                instagramId: user.instagramId, 
-                saved: true 
-              }).sort({ savedAt: -1 }).limit(3);
-
-              let endMsg = `🎓 【DEADLINE / EXAM NOTIFICATION】 🎓\n\n` +
-                `Woohoo! You are done with your *${blocker.name}* now! 🎉🚀\n` +
-                `You can finally start learning something new!\n\n`;
-
-              if (savedNotes.length > 0) {
-                endMsg += `Here are the resources you saved earlier to refer to:\n\n`;
-                savedNotes.forEach((note, index) => {
-                  endMsg += `${index + 1}. *${note.title}* (${note.category || 'resource'})\n` +
-                    `   💡 Summary: ${note.summary.length > 120 ? note.summary.substring(0, 117) + '...' : note.summary}\n\n`;
-                });
-                endMsg += `💡 Type "!notes" to view full references.`;
-              } else {
-                endMsg += `Share educational Reels here to transcribe and save resources to your study board! 📲📚`;
-              }
-
-              await this.sendMessage(user.instagramId, endMsg).catch(err => {
-                console.error(`[BLOCKER] Failed to send blocker completion DM to ${user.instagramId}:`, err.message);
-              });
             }
           }
+
           if (updated) {
             await user.save();
+
+            // Find up to 3 saved learning resources/notes this user wanted to refer to
+            const savedNotes = await ReelNote.find({ 
+              instagramId: user.instagramId, 
+              saved: true 
+            }).sort({ savedAt: -1 }).limit(3);
+
+            let endMsg = `🎓 【DEADLINE / EXAM NOTIFICATION】 🎓\n\n` +
+              `Woohoo! You are done with:\n` +
+              completedBlockerNames.map(name => `• *${name}*`).join('\n') +
+              `\n\nYou can finally start learning something new! 🚀🎉\n\n`;
+
+            if (savedNotes.length > 0) {
+              endMsg += `Here are the learning resources you saved to refer to:\n\n`;
+              savedNotes.forEach((note, index) => {
+                endMsg += `${index + 1}. *${note.title}* (${note.category || 'resource'})\n` +
+                  `   💡 Summary: ${note.summary.length > 120 ? note.summary.substring(0, 117) + '...' : note.summary}\n\n`;
+              });
+              endMsg += `💡 Type "!notes" to view full references.`;
+            } else {
+              endMsg += `Share educational Reels here to transcribe and save resources to your study board! 📲📚`;
+            }
+
+            await this.sendMessage(user.instagramId, endMsg).catch(err => {
+              console.error(`[BLOCKER] Failed to send blocker completion DM to ${user.instagramId}:`, err.message);
+            });
           }
         }
 

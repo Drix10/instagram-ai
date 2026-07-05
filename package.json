@@ -4,6 +4,7 @@
   "description": "Instagram DM bot that transcribes shared Reels to build a workout timetable and set reminders using Gemini AI.",
   "main": "index.js",
   "scripts": {
+    "build": "node --check index.js",
     "start": "node index.js",
     "dev": "node --watch index.js",
     "test:gemini": "node test-gemini.js"

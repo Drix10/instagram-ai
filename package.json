@@ -1,0 +1,19 @@
+{
+  "name": "instagram-reel-timetable-bot",
+  "version": "1.0.0",
+  "description": "Instagram DM bot that transcribes shared Reels to build a workout timetable and set reminders using Gemini AI.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test:gemini": "node test-gemini.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.3.1",
+    "node-cron": "^3.0.3"
+  }
+}

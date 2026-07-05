@@ -44,13 +44,31 @@ class GeminiHandler {
   }
 
   async downloadVideo(url, targetPath) {
+    let downloadUrl = url;
+
+    if (url.includes('instagram.com/')) {
+      try {
+        console.log(`[GEMINI] Resolving Reel CDN video URL via IGDL API for: ${url}`);
+        const resolverResponse = await axios.get(`https://igdl-five.vercel.app/api/video?postUrl=${encodeURIComponent(url)}`, {
+          timeout: 15000
+        });
+        
+        if (resolverResponse?.data?.data?.videoUrl) {
+          downloadUrl = resolverResponse.data.data.videoUrl;
+          console.log(`[GEMINI] Resolved CDN video URL successfully`);
+        }
+      } catch (err) {
+        console.warn(`[GEMINI] IGDL API resolver failed: ${err.message}. Attempting direct download fallback.`);
+      }
+    }
+
     return new Promise(async (resolve, reject) => {
       let writer;
       let stream;
       try {
         writer = fs.createWriteStream(targetPath);
         const response = await axios({
-          url,
+          url: downloadUrl,
           method: 'GET',
           responseType: 'stream',
           timeout: 45000,

@@ -344,13 +344,65 @@ class GeminiHandler {
 
   async generateChatResponse(userTimetable, chatHistory, latestInput, userBlockers = []) {
     if (!this.genAI) {
-      return "I can't chat right now because the Gemini API is not configured. Please add GEMINI_API_KEY in settings.";
+      return JSON.stringify({
+        reply: "I can't chat right now because the Gemini API is not configured. Please add GEMINI_API_KEY in settings.",
+        action: "none"
+      });
     }
+
+    const responseSchema = {
+      type: 'OBJECT',
+      properties: {
+        reply: { 
+          type: 'STRING', 
+          description: 'Your conversational text response back to the user in DMs.' 
+        },
+        action: { 
+          type: 'STRING', 
+          enum: ['add_timetable', 'clear_timetable', 'add_reminder', 'clear_reminders', 'add_deadline', 'clear_deadlines', 'create_note', 'none'],
+          description: 'Detect if the user requested an action. Select appropriate action, or none.' 
+        },
+        actionData: {
+          type: 'OBJECT',
+          properties: {
+            day: { type: 'STRING', description: 'Day of week for add_timetable action, e.g. Monday. REQUIRED if action is add_timetable.' },
+            time: { type: 'STRING', description: 'Time of day in 24h format, e.g. 14:00. Optional.' },
+            activity: { type: 'STRING', description: 'Activity/topic description. REQUIRED if action is add_timetable.' },
+            notes: { type: 'STRING', description: 'Additional notes. Optional.' },
+            reminderActivity: { type: 'STRING', description: 'Activity/alert description to remind about. REQUIRED if action is add_reminder.' },
+            reminderTime: { type: 'STRING', description: 'Target date/time in ISO-8601 UTC format, e.g. 2026-07-06T15:00:00Z. Calculated relative to the current time context. REQUIRED if action is add_reminder.' },
+            reminderRepeat: { type: 'STRING', enum: ['none', 'daily', 'weekly'], description: 'Repeat frequency. Optional.' },
+            deadlineName: { type: 'STRING', description: 'Name of the task/milestone/deadline. REQUIRED if action is add_deadline.' },
+            deadlineEndDate: { type: 'STRING', description: 'Target end date in ISO-8601 UTC format or relative format (e.g. 5d). REQUIRED if action is add_deadline.' },
+            noteTitle: { type: 'STRING', description: 'Title of the custom note. REQUIRED if action is create_note.' },
+            noteSummary: { type: 'STRING', description: 'Detailed content body/summary of the custom note. REQUIRED if action is create_note.' },
+            noteCategory: { type: 'STRING', enum: ['study', 'project', 'resource', 'tips', 'other'], description: 'Category of the note. REQUIRED if action is create_note.' },
+            noteResources: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  name: { type: 'STRING', description: 'Resource name' },
+                  type: { type: 'STRING', description: 'Resource type' },
+                  description: { type: 'STRING', description: 'Resource description' }
+                },
+                required: ['name']
+              }
+            }
+          }
+        }
+      },
+      required: ['reply', 'action']
+    };
 
     try {
       const model = this.genAI.getGenerativeModel({ 
         model: GEMINI_MODEL,
-        safetySettings 
+        safetySettings,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: responseSchema
+        }
       });
       
       const timetableStr = userTimetable && userTimetable.length > 0 
@@ -359,15 +411,39 @@ class GeminiHandler {
 
       const blockersStr = userBlockers && userBlockers.length > 0
         ? userBlockers.map(b => `- [${b.name}] Ends on ${new Date(b.endDate).toDateString()} (Active: ${!b.notified})`).join('\n')
-        : 'No current blocker deadlines (e.g. exams) configured.';
+        : 'No active task deadlines configured.';
+
+      const nowStr = new Date().toISOString();
+      const localTimeStr = new Date().toLocaleString();
 
       const systemPrompt = `You are a supportive, knowledgeable AI personal schedule, study helper, and resource assistant. 
       You help the user stay on track with their learning timetable, deadlines, and notes.
-      Here is the user's CURRENT WEEKLY TIMETABLE:\n${timetableStr}\n\n
-      Here are their ACTIVE BLOCKERS/EXAM DEADLINES:\n${blockersStr}\n\n
-      Answer the user's query concisely and helpfully, using their timetable and blockers context. 
-      If they ask to add deadlines, show schedules, or view notes, explain how they can use commands like !timetable, !deadline, or share learning Reels.
-      If they have exams/blockers going on, support them, and reassure them they can start learning new things once their exam deadlines are completed!`;
+
+      Here is the user's CURRENT WEEKLY TIMETABLE:
+      ${timetableStr}
+
+      Here are their ACTIVE TASK DEADLINES:
+      ${blockersStr}
+
+      CURRENT TIME CONTEXT:
+      - Current Server Time (UTC): ${nowStr}
+      - Current Local Time: ${localTimeStr}
+
+      Role instructions:
+      1. Conversational Reply: Address the user's query concisely and helpfully.
+      2. Triggering Actions: If the user indicates they want to schedule a class/activity, set a reminder, add a deadline, clear any schedules, or save/write down notes/facts, determine the correct "action" and parse the relevant arguments into "actionData".
+      
+      Actions Reference:
+      - 'add_timetable': User wants to schedule an activity in their weekly routine. (e.g. "put study math on Monday at 3pm"). Must populate 'day', 'activity', 'time' (if specified).
+      - 'clear_timetable': User wants to clear their timetable.
+      - 'add_reminder': User wants to set a reminder/alert. (e.g. "remind me to review biology tomorrow at 9 AM"). Must calculate and populate 'reminderActivity' and 'reminderTime' (ISO-8601 UTC format relative to current time context).
+      - 'clear_reminders': User wants to clear active reminders.
+      - 'add_deadline': User wants to add a project/course deadline. (e.g. "I have a homework deadline in 3 days"). Must calculate and populate 'deadlineName' and 'deadlineEndDate' (ISO-8601 UTC format or relative format like '3d').
+      - 'clear_deadlines': User wants to clear all active deadlines.
+      - 'create_note': User wants to save custom notes, guidelines, or summaries. (e.g. "save a note about quicksort: it uses divide-and-conquer"). Must populate 'noteTitle' and 'noteSummary' (the detailed explanation or facts the user wanted to save).
+      - 'none': Default for normal conversations, questions, or if the action was already completed and they are just saying thanks.
+
+      Note: If the user says "!notes", "!deadline", "!timetable", or "!reminders", those are handled by command files. If they type natural messages asking you to add, set, clear, or save these things, trigger the corresponding action!`;
 
       const contents = [
         { role: 'user', parts: [{ text: systemPrompt }] },
@@ -392,7 +468,10 @@ class GeminiHandler {
       return result.response.text();
     } catch (error) {
       console.error('[GEMINI] Chat model error:', error);
-      return "Sorry, I had a brief brain freeze while thinking of a response! 🧠❄️ Please try again.";
+      return JSON.stringify({
+        reply: "Sorry, I had a brief brain freeze while thinking of a response! 🧠❄️ Please try again.",
+        action: "none"
+      });
     }
   }
 }

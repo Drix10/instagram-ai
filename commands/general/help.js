@@ -19,9 +19,9 @@ module.exports = {
       `• ${prefix}notes view <index> - View detailed content of a saved note\n` +
       `• ${prefix}reminders - View your scheduled learning reminder alerts\n` +
       `• ${prefix}reminders clear - Clear all active reminders\n` +
-      `• ${prefix}deadline add <name> <date> - Add an exam or project blocker deadline (Date: YYYY-MM-DD or 3d)\n` +
-      `• ${prefix}deadline list - View all current blocker deadlines\n` +
-      `• ${prefix}deadline clear - Clear all exam blockers\n` +
+      `• ${prefix}deadline add <name> <date> - Add a task or learning deadline (Date: YYYY-MM-DD or 3d)\n` +
+      `• ${prefix}deadline list - View all current deadlines\n` +
+      `• ${prefix}deadline clear - Clear all active deadlines\n` +
       `• ${prefix}ping - Test bot latency\n\n` +
       `💡 *Tip*: Share any learning/educational Reel with me in this chat! I will watch, transcribe, and help you map it directly into your schedule! 📲🎥`;
 

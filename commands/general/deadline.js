@@ -2,10 +2,10 @@ const User = require('../../Models/User');
 
 module.exports = {
   name: 'deadline',
-  description: 'Manage exam blockers and study deadlines',
+  description: 'Manage study and task deadlines',
   usage: 'add <name> <YYYY-MM-DD or Xd> | list | clear',
   cooldown: 3,
-  aliases: ['blocker', 'deadlines', 'exams'],
+  aliases: ['deadlines'],
   requiresAuth: true,
 
   async execute(client, message, args) {
@@ -18,23 +18,22 @@ module.exports = {
       }
 
       if (args.length === 0 || args[0].toLowerCase() === 'list') {
-        
         const activeBlockers = user.blockers.filter(b => !b.notified);
         
         if (activeBlockers.length === 0) {
           return client.sendMessage(
             instagramId, 
-            `🎓 You have no active exam blockers or learning deadlines!\n\n` +
-            `Type "!deadline add Exams 5d" or "!deadline add Board Exams 2026-07-15" to block your schedule. ` +
-            `I will remind you to start learning new things once your exams finish! 🚀`
+            `📅 You have no active task or learning deadlines!\n\n` +
+            `Type "!deadline add Assignment 5d" or "!deadline add Biology Exam 2026-07-15" to register a deadline. ` +
+            `I will remind you when these deadlines complete! 🚀`
           );
         }
 
-        let listText = `🎓 【ACTIVE EXAMS & DEADLINES】 🎓\n\n`;
+        let listText = `📅 【ACTIVE DEADLINES】 📅\n\n`;
         activeBlockers.forEach((b, index) => {
           listText += `${index + 1}. *${b.name}* 📅\n   Ends on: ${new Date(b.endDate).toDateString()}\n\n`;
         });
-        listText += `💡 I will automatically DM you to check in and suggest your saved learning resources once these dates complete!`;
+        listText += `💡 I will automatically DM you to check in and suggest your saved learning resources once these deadlines complete!`;
         return client.sendMessage(instagramId, listText);
       }
 
@@ -43,12 +42,12 @@ module.exports = {
       if (subcmd === 'clear') {
         user.blockers = [];
         await user.save();
-        return client.sendMessage(instagramId, '🧹 All exam blockers and learning deadlines have been cleared.');
+        return client.sendMessage(instagramId, '🧹 All task and study deadlines have been cleared.');
       }
 
       if (subcmd === 'add') {
         if (args.length < 3) {
-          return client.sendMessage(instagramId, `❌ Usage: !deadline add <Exam/Project Name> <YYYY-MM-DD or relative days e.g. 5d>`);
+          return client.sendMessage(instagramId, `❌ Usage: !deadline add <Deadline/Project Name> <YYYY-MM-DD or relative days e.g. 5d>`);
         }
 
         const dateStr = args[args.length - 1].trim();
@@ -76,9 +75,9 @@ module.exports = {
 
         return client.sendMessage(
           instagramId, 
-          `🎓 Added Blocker: *${name}*\n` +
-          `📅 Scheduled End: ${endDate.toDateString()}\n\n` +
-          `Study schedules are paused during this period. I will DM you as soon as this completes to suggest resource notes and start learning! 🚀`
+          `📅 Added Deadline: *${name}*\n` +
+          `📅 Scheduled Date: ${endDate.toDateString()}\n\n` +
+          `I will DM you as soon as this completes to suggest resource notes and check in on your learning! 🚀`
         );
       }
 

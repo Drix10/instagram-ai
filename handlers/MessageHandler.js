@@ -215,7 +215,191 @@ class MessageHandler {
           text,
           user.blockers
         );
-        await this.client.sendMessage(instagramId, response);
+
+        let replyText = response;
+        let action = 'none';
+        let actionData = {};
+
+        try {
+          let cleanResponse = response.trim();
+          if (cleanResponse.startsWith('```')) {
+            const match = cleanResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (match && match[1]) {
+              cleanResponse = match[1].trim();
+            }
+          }
+          const parsed = JSON.parse(cleanResponse);
+          replyText = parsed.reply || response;
+          action = parsed.action || 'none';
+          actionData = parsed.actionData || {};
+        } catch (jsonErr) {
+          // Response is not structured JSON, treat as raw reply text
+        }
+
+        if (action && action !== 'none') {
+          console.log(`[MESSAGE_ROUTER] AI triggered action: ${action} with data:`, actionData);
+          try {
+            switch (action) {
+              case 'add_timetable': {
+                if (actionData.day && actionData.activity) {
+                  const day = actionData.day;
+                  const time = actionData.time || '';
+                  const activity = actionData.activity;
+                  const isDuplicate = user.timetable.some(existing => 
+                    existing.day.toLowerCase() === day.toLowerCase() &&
+                    (existing.time || '') === time &&
+                    existing.activity.toLowerCase() === activity.toLowerCase()
+                  );
+                  if (!isDuplicate) {
+                    user.timetable.push({
+                      day: day,
+                      time: time,
+                      activity: activity,
+                      notes: actionData.notes || 'Added via AI chat'
+                    });
+                    await user.save();
+                  }
+                }
+                break;
+              }
+              case 'clear_timetable': {
+                await this.client.sendButtonTemplate(
+                  instagramId,
+                  "⚠️ Are you sure you want to clear your weekly timetable?",
+                  {
+                    buttons: [
+                      {
+                        type: 'postback',
+                        title: '🗑️ Yes, Clear It',
+                        payload: `${this.client.prefix}confirm_clear:timetable`
+                      }
+                    ]
+                  }
+                );
+                break;
+              }
+              case 'add_reminder': {
+                const reminderActivity = actionData.reminderActivity || actionData.activity || actionData.deadlineName || actionData.name;
+                const reminderTime = actionData.reminderTime || actionData.time || actionData.deadlineEndDate || actionData.endDate;
+                if (reminderActivity && reminderTime) {
+                  const targetTime = new Date(reminderTime);
+                  if (!isNaN(targetTime.getTime())) {
+                    const isDuplicate = user.reminders.some(existing => 
+                      existing.active &&
+                      existing.activity.toLowerCase() === reminderActivity.toLowerCase() &&
+                      existing.time.getTime() === targetTime.getTime()
+                    );
+                    if (!isDuplicate) {
+                      user.reminders.push({
+                        activity: reminderActivity,
+                        time: targetTime,
+                        repeat: actionData.reminderRepeat || 'none',
+                        active: true
+                      });
+                      await user.save();
+                    }
+                  }
+                }
+                break;
+              }
+              case 'clear_reminders': {
+                await this.client.sendButtonTemplate(
+                  instagramId,
+                  "⚠️ Are you sure you want to clear all active reminders?",
+                  {
+                    buttons: [
+                      {
+                        type: 'postback',
+                        title: '🗑️ Yes, Clear It',
+                        payload: `${this.client.prefix}confirm_clear:reminders`
+                      }
+                    ]
+                  }
+                );
+                break;
+              }
+              case 'add_deadline': {
+                const deadlineName = actionData.deadlineName || actionData.name || actionData.reminderActivity || actionData.activity;
+                const deadlineEndDate = actionData.deadlineEndDate || actionData.endDate || actionData.reminderTime || actionData.time;
+                if (deadlineName && deadlineEndDate) {
+                  let endDate;
+                  if (typeof deadlineEndDate === 'string' && deadlineEndDate.match(/^\d+d$/i)) {
+                    const days = parseInt(deadlineEndDate, 10);
+                    endDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+                  } else {
+                    endDate = new Date(deadlineEndDate);
+                  }
+
+                  if (!isNaN(endDate.getTime())) {
+                    const isDuplicate = user.blockers.some(existing => 
+                      !existing.notified &&
+                      existing.name.toLowerCase() === deadlineName.toLowerCase() &&
+                      existing.endDate.getTime() === endDate.getTime()
+                    );
+                    if (!isDuplicate) {
+                      user.blockers.push({
+                        name: deadlineName,
+                        endDate: endDate,
+                        notified: false
+                      });
+                      await user.save();
+                    }
+                  }
+                }
+                break;
+              }
+              case 'clear_deadlines': {
+                await this.client.sendButtonTemplate(
+                  instagramId,
+                  "⚠️ Are you sure you want to clear all task deadlines?",
+                  {
+                    buttons: [
+                      {
+                        type: 'postback',
+                        title: '🗑️ Yes, Clear It',
+                        payload: `${this.client.prefix}confirm_clear:deadlines`
+                      }
+                    ]
+                  }
+                );
+                break;
+              }
+              case 'create_note': {
+                const title = actionData.noteTitle || actionData.title || 'Custom Note';
+                const summary = actionData.noteSummary || actionData.notes || actionData.summary || '';
+                const category = actionData.noteCategory || actionData.category || 'resource';
+                const rawResources = actionData.noteResources || actionData.resources || [];
+                if (title && summary) {
+                  const resourcesFormatted = rawResources.map(r => ({
+                    name: r.name,
+                    type: r.type || 'resource',
+                    description: r.description || ''
+                  }));
+
+                  const note = new ReelNote({
+                    instagramId: user.instagramId,
+                    reelUrl: undefined,
+                    title: title,
+                    summary: summary,
+                    category: category,
+                    resourceDetails: {
+                      resources: resourcesFormatted
+                    },
+                    saved: true,
+                    savedAt: new Date()
+                  });
+                  await note.save();
+                }
+                break;
+              }
+            }
+          } catch (actionErr) {
+            console.error(`[MESSAGE_ROUTER] Failed to execute action ${action}:`, actionErr);
+            replyText += "\n\n⚠️ (Note: I encountered an issue updating your settings for this action.)";
+          }
+        }
+
+        await this.client.sendMessage(instagramId, replyText);
       } catch (chatErr) {
         console.error('[MESSAGE_ROUTER] Gemini Chatbot failed:', chatErr);
       }

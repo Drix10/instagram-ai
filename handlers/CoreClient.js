@@ -159,20 +159,20 @@ class CoreClient {
           }
         }
 
-        const usersWithExams = await User.find({
+        const usersWithDeadlines = await User.find({
           'blockers.endDate': { $lte: now },
           'blockers.notified': false
         });
 
-        for (const user of usersWithExams) {
-          const completedBlockerNames = [];
+        for (const user of usersWithDeadlines) {
+          const completedDeadlineNames = [];
           let updated = false;
 
           for (const blocker of user.blockers) {
             if (!blocker.notified && blocker.endDate <= now) {
-              console.log(`[BLOCKER] Blocker "${blocker.name}" completed for user ${user.instagramId}. Staging notification.`);
+              console.log(`[DEADLINE] Deadline "${blocker.name}" reached for user ${user.instagramId}. Staging notification.`);
               blocker.notified = true;
-              completedBlockerNames.push(blocker.name);
+              completedDeadlineNames.push(blocker.name);
               updated = true;
             }
           }
@@ -185,24 +185,24 @@ class CoreClient {
               saved: true 
             }).sort({ savedAt: -1 }).limit(3);
 
-            let endMsg = `🎓 【DEADLINE / EXAM NOTIFICATION】 🎓\n\n` +
-              `Woohoo! You are done with:\n` +
-              completedBlockerNames.map(name => `• *${name}*`).join('\n') +
-              `\n\nYou can finally start learning something new! 🚀🎉\n\n`;
+            let endMsg = `📅 【DEADLINE COMPLETED】 📅\n\n` +
+              `You have reached the following deadline milestones:\n` +
+              completedDeadlineNames.map(name => `• *${name}*`).join('\n') +
+              `\n\nAwesome job keeping up with your tasks! 🚀🎉\n\n`;
 
             if (savedNotes.length > 0) {
-              endMsg += `Here are the learning resources you saved to refer to:\n\n`;
+              endMsg += `Here are your saved learning resources to refer to:\n\n`;
               savedNotes.forEach((note, index) => {
                 endMsg += `${index + 1}. *${note.title}* (${note.category || 'resource'})\n` +
                   `   💡 Summary: ${note.summary.length > 120 ? note.summary.substring(0, 117) + '...' : note.summary}\n\n`;
               });
               endMsg += `💡 Type "!notes" to view full references.`;
             } else {
-              endMsg += `Share educational Reels here to transcribe and save resources to your study board! 📲📚`;
+              endMsg += `Send messages or share educational Reels here to keep mapping your learning routine! 📲📚`;
             }
 
             await this.sendMessage(user.instagramId, endMsg).catch(err => {
-              console.error(`[BLOCKER] Failed to send blocker completion DM to ${user.instagramId}:`, err.message);
+              console.error(`[DEADLINE] Failed to send deadline completion DM to ${user.instagramId}:`, err.message);
             });
           }
         }

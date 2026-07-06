@@ -15,7 +15,7 @@ const TimetableSuggestionSchema = new mongoose.Schema({
 
 const ReelNoteSchema = new mongoose.Schema({
   instagramId: { type: String, required: true },
-  reelUrl: { type: String, required: true },
+  reelUrl: { type: String },
   title: { type: String, required: true },
   summary: { type: String, required: true },
   category: { type: String, enum: ['study', 'project', 'resource', 'tips', 'other'], default: 'resource' },

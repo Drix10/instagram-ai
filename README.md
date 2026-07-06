@@ -34,6 +34,29 @@ We are resolving the friction of converting short-form educational content (like
 
 ---
 
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    A[Instagram DM Event] -->|Meta Webhook| B[webhook-handler.js]
+    B -->|processWebhook| C[index.js / webhook]
+    B -->|handleMessage| D[instagramClient.processMessage]
+    D -->|CoreClient.js| E[handlers/MessageHandler.js]
+    E -->|User Message Queue| F{Is Command or Reel?}
+    F -->|Reel URL| G[handlers/GeminiHandler.js]
+    F -->|Command/Postback| H[handlers/CommandHandler.js]
+    F -->|Chat Message| I[handlers/GeminiHandler.js chatbot]
+    G -->|Download Video| J[utils/instagram-downloader.js]
+    G -->|Upload & Transcribe| K[Gemini 3.5 Flash API]
+    G -->|Save Results| L[(MongoDB: ReelNote / User)]
+    H -->|Execute| M[commands/ / buttons/]
+    M -->|Query/Update| L
+    M -->|Send Message| N[handlers/ApiHandler.js]
+    N -->|Instagram Graph API| O[User DMs]
+```
+
+---
+
 ## 📑 Key Features:
 - 🎨 **Automated Reel Analysis**: Downloads shared Reel videos, transcribes voice/overlays, and maps them to clean markdown summaries.
 - 📅 **Dynamic Learning Timetable**: Suggests schedule slots for study routines and allows users to modify schedules via interactive commands.

@@ -96,7 +96,7 @@ class MessageHandler {
       try {
         await this.client.sendMessage(
           instagramId,
-          "📥 Reel received! Analyzing contents using Gemini AI... 🤖🎥"
+          "📥 Reel received! Analyzing contents using Meshapi's Gemini AI... 🤖🎥"
         );
 
         let reelCaptionText = message.reelCaption;

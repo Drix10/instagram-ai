@@ -68,6 +68,11 @@ class RateLimiter {
     if (this.userRateLimits.has(userId)) {
       const userData = this.userRateLimits.get(userId);
 
+      if (now - userData.firstCommand >= 10000) {
+        userData.count = 1;
+        userData.firstCommand = now;
+      }
+
       if (userData.count >= 10 && now - userData.firstCommand < 10000) {
         console.log(`[RATE LIMITER] User ${userId} rate limited: ${userData.count} commands in ${Math.floor((now - userData.firstCommand) / 1000)}s`);
         return false;
@@ -78,9 +83,6 @@ class RateLimiter {
         return false;
       }
 
-      if (userData.count === 1) {
-        userData.firstCommand = now;
-      }
       userData.count++;
       userData.lastCommand = now;
       this.userRateLimits.set(userId, userData);

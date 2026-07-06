@@ -24,3 +24,9 @@ yarn-error.log*
 # System files
 .DS_Store
 Thumbs.db
+
+# Instagram session (contains login cookies - DO NOT COMMIT)
+.ig-session.json
+
+# Test files
+test_*.js

@@ -17,7 +17,6 @@ module.exports = {
         return client.sendMessage(instagramId, 'You need to be registered to manage reminders! Send !register first.');
       }
 
-      // Handle "clear" argument
       if (args.length > 0 && args[0].toLowerCase() === 'clear') {
         user.reminders = [];
         await user.save();

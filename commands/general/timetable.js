@@ -17,7 +17,6 @@ module.exports = {
         return client.sendMessage(instagramId, 'You need to be registered first! Send !register to get started.');
       }
 
-      // Handle "clear" argument
       if (args.length > 0 && args[0].toLowerCase() === 'clear') {
         user.timetable = [];
         await user.save();
@@ -34,7 +33,6 @@ module.exports = {
         );
       }
 
-      // Group activities by day of the week
       const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
       let timetableText = `📅 【WEEKLY TIMETABLE】 📅\n\n`;
       let hasActivities = false;
@@ -43,7 +41,7 @@ module.exports = {
         const activities = user.timetable.filter(act => act.day.toLowerCase() === day.toLowerCase());
         if (activities.length > 0) {
           hasActivities = true;
-          // Sort activities by time
+          
           activities.sort((a, b) => {
             if (!a.time) return 1;
             if (!b.time) return -1;
@@ -61,7 +59,7 @@ module.exports = {
       });
 
       if (!hasActivities) {
-        // Fallback for custom day mappings not matched in standard array
+        
         timetableText += `Custom Schedules:\n`;
         user.timetable.forEach(act => {
           const timeStr = act.time ? ` [${act.time}]` : '';

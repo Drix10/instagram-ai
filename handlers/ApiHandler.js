@@ -31,10 +31,10 @@ class ApiHandler {
 
   async getProfileInfo(userId) {
     try {
-      if (this.client.profileCache.has(userId)) {
-        const cachedProfile = this.client.profileCache.get(userId);
-        if (Date.now() - cachedProfile.timestamp < 3600000) {
-          return cachedProfile.data;
+      if (this.client.profileCache) {
+        const cached = this.client.getCachedProfile(userId);
+        if (cached) {
+          return cached;
         }
       }
 
@@ -69,10 +69,7 @@ class ApiHandler {
             : `user_${userId.substring(0, 4)}`;
         }
 
-        this.client.profileCache.set(userId, {
-          data: profileData,
-          timestamp: Date.now()
-        });
+        this.client.setCachedProfile(userId, profileData);
 
         return profileData;
       } catch (error) {
@@ -82,10 +79,7 @@ class ApiHandler {
           username: `user_${userId.substring(0, 4)}`,
           name: "Instagram User"
         };
-        this.client.profileCache.set(userId, {
-          data: defaultProfile,
-          timestamp: Date.now()
-        });
+        this.client.setCachedProfile(userId, defaultProfile);
         return defaultProfile;
       }
     } catch (error) {
@@ -108,8 +102,9 @@ class ApiHandler {
       const response = await axios({
         method: 'POST',
         url: `https://graph.instagram.com/v21.0/me/messages`,
-        params: {
-          access_token: accessToken
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
         },
         data: {
           recipient: { comment_id: commentId },
@@ -146,8 +141,8 @@ class ApiHandler {
           'Content-Type': 'application/json'
         },
         data: {
-          recipient: JSON.stringify({ id: recipientId }),
-          message: JSON.stringify({ text: text })
+          recipient: { id: recipientId },
+          message: { text: text }
         }
       });
 
@@ -180,8 +175,8 @@ class ApiHandler {
           'Content-Type': 'application/json'
         },
         data: {
-          recipient: JSON.stringify({ id: recipientId }),
-          message: JSON.stringify({
+          recipient: { id: recipientId },
+          message: {
             attachment: {
               type: 'image',
               payload: {
@@ -189,7 +184,7 @@ class ApiHandler {
                 is_reusable: true
               }
             }
-          })
+          }
         }
       });
 
@@ -246,7 +241,8 @@ class ApiHandler {
         method: 'POST',
         url: `https://graph.instagram.com/v21.0/me/messages`,
         headers: {
-          'Authorization': `Bearer ${accessToken}`
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
         },
         data: {
           recipient: { id: recipientId },
@@ -313,7 +309,8 @@ class ApiHandler {
         method: 'POST',
         url: `https://graph.instagram.com/v21.0/me/messages`,
         headers: {
-          'Authorization': `Bearer ${accessToken}`
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
         },
         data: {
           recipient: { id: recipientId },

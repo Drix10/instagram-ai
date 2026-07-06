@@ -32,7 +32,6 @@ module.exports = {
       let addedCount = 0;
       let skippedCount = 0;
 
-      // Merge suggestions into user timetable, checking for duplicates
       note.timetableSuggestions.forEach(sug => {
         const isDuplicate = user.timetable.some(existing => 
           existing.day.toLowerCase() === sug.day.toLowerCase() &&

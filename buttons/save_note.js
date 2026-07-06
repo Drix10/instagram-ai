@@ -19,7 +19,6 @@ module.exports = {
         return client.sendMessage(instagramId, '❌ Note not found or access denied.');
       }
 
-      // If note was already saved
       if (note.saved) {
         return client.sendMessage(
           instagramId, 
@@ -27,7 +26,6 @@ module.exports = {
         );
       }
 
-      // Mark the note as saved persistently
       note.saved = true;
       note.savedAt = new Date();
       await note.save();

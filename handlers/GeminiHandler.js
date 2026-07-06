@@ -4,7 +4,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const GEMINI_MODEL = 'gemini-3.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const API_TIMEOUT_MS = 35000;
 
 const safetySettings = [
@@ -44,103 +44,168 @@ class GeminiHandler {
   }
 
   async downloadVideo(url, targetPath) {
-    let downloadUrl = url;
-
+    
     if (url.includes('instagram.com/')) {
       try {
-        console.log(`[GEMINI] Resolving Reel CDN video URL via IGDL API for: ${url}`);
-        const resolverResponse = await axios.get(`https://igdl-five.vercel.app/api/video?postUrl=${encodeURIComponent(url)}`, {
-          timeout: 15000
-        });
+        const igDownloader = require('../utils/instagram-downloader');
+        console.log(`[GEMINI] Downloading Reel via authenticated IG session for: ${url}`);
+        await igDownloader.downloadReel(url, targetPath);
+        console.log(`[GEMINI] Download completed successfully via IG login method`);
+        return;
+      } catch (igErr) {
+        console.warn(`[GEMINI] IG login download failed: ${igErr.message}. Trying fallback...`);
         
-        if (resolverResponse?.data?.data?.videoUrl) {
-          downloadUrl = resolverResponse.data.data.videoUrl;
-          console.log(`[GEMINI] Resolved CDN video URL successfully`);
-        }
-      } catch (err) {
-        console.warn(`[GEMINI] IGDL API resolver failed: ${err.message}. Attempting direct download fallback.`);
       }
     }
 
-    return new Promise(async (resolve, reject) => {
-      let writer;
-      let stream;
-      try {
-        writer = fs.createWriteStream(targetPath);
-        const response = await axios({
-          url: downloadUrl,
-          method: 'GET',
-          responseType: 'stream',
-          timeout: 45000,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
-        });
+    const downloadUrl = url;
+    console.log(`[GEMINI] Downloading video via direct URL: ${downloadUrl.substring(0, 80)}...`);
 
-        stream = response.data;
-        const contentLength = parseInt(response.headers['content-length'], 10);
-        const limitBytes = 35 * 1024 * 1024;
-
-        if (!isNaN(contentLength) && contentLength > limitBytes) {
-          writer.close();
-          fs.unlink(targetPath, () => {});
-          return reject(new Error('File size exceeds the 35MB limit'));
-        }
-
-        let bytesWritten = 0;
-        stream.on('data', (chunk) => {
-          bytesWritten += chunk.length;
-          if (bytesWritten > limitBytes) {
-            stream.destroy();
-            writer.destroy();
-            fs.unlink(targetPath, () => {});
-            reject(new Error('File size exceeded the 35MB limit during download'));
-          }
-        });
-
-        stream.pipe(writer);
-
-        writer.on('finish', () => {
-          writer.close();
-          resolve();
-        });
-
-        writer.on('error', (err) => {
-          fs.unlink(targetPath, () => {});
-          reject(err);
-        });
-
-        stream.on('error', (err) => {
-          writer.destroy();
-          fs.unlink(targetPath, () => {});
-          reject(err);
-        });
-      } catch (error) {
-        if (writer) {
-          writer.destroy();
-        }
-        fs.unlink(targetPath, () => {});
-        reject(error);
+    const response = await axios({
+      url: downloadUrl,
+      method: 'GET',
+      responseType: 'stream',
+      timeout: 45000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
+    });
+
+    const contentType = response.headers['content-type'] || '';
+    const isClearlyInvalid = contentType.includes('text/html') || contentType.includes('text/plain') || contentType.includes('application/json');
+    const isValidType = contentType.includes('video/') || contentType.includes('application/octet-stream') || contentType === '';
+
+    if (!isValidType || isClearlyInvalid) {
+      try { response.data.destroy(); } catch (e) {}
+      throw new Error(`Invalid content type: received "${contentType}" instead of video`);
+    }
+
+    const stream = response.data;
+    const contentLength = parseInt(response.headers['content-length'], 10);
+    const limitBytes = 35 * 1024 * 1024;
+
+    if (!isNaN(contentLength) && contentLength > limitBytes) {
+      try { stream.destroy(); } catch (e) {}
+      throw new Error('File size exceeds the 35MB limit');
+    }
+
+    return new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(targetPath);
+      let bytesWritten = 0;
+      let settled = false;
+
+      let stallTimer = setTimeout(() => {
+        finish(new Error('Download stalled (no data for 60s)'));
+      }, 60000);
+
+      const resetStallTimer = () => {
+        if (settled) return;
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          finish(new Error('Download stalled (no data for 60s)'));
+        }, 60000);
+      };
+
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+        try { stream.destroy(); } catch (e) {}
+        try { writer.destroy(); } catch (e) {}
+        if (err) {
+          fs.unlink(targetPath, () => {});
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      stream.on('data', (chunk) => {
+        bytesWritten += chunk.length;
+        resetStallTimer();
+        if (bytesWritten > limitBytes) {
+          finish(new Error('File size exceeded the 35MB limit during download'));
+        }
+      });
+
+      stream.pipe(writer);
+
+      writer.on('finish', () => {
+        finish(null);
+      });
+
+      writer.on('error', (err) => {
+        finish(new Error(`Write error: ${err.message}`));
+      });
+
+      stream.on('error', (err) => {
+        finish(new Error(`Stream error: ${err.message}`));
+      });
     });
   }
 
-  async withTimeout(promise, timeoutMs) {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`API operation timeout after ${timeoutMs}ms`)),
-          timeoutMs
-        )
-      ),
-    ]);
+  withTimeout(promise, timeoutMs) {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`API operation timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      clearTimeout(timer);
+    });
   }
 
-  async transcribeReel(instagramId, reelUrl, retries = 2) {
-    if (!this.genAI || !this.fileManager) {
+  async transcribeReel(instagramId, reelUrl, captionText, retries = 2) {
+    if (!this.genAI) {
       throw new Error('Gemini API is not initialized. Please configure GEMINI_API_KEY.');
     }
+
+    const responseSchema = {
+      type: 'OBJECT',
+      properties: {
+        title: { type: 'STRING', description: 'What is this video/reel about? E.g., Learn SQL in 10 Days' },
+        summary: { type: 'STRING', description: 'Brief transcription and summary of the key tips, steps, links, or advice shown in the reel.' },
+        category: { 
+          type: 'STRING', 
+          enum: ['study', 'project', 'resource', 'tips', 'other'], 
+          description: 'The category that matches the reel contents.' 
+        },
+        resourceDetails: {
+          type: 'OBJECT',
+          properties: {
+            resources: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  name: { type: 'STRING', description: 'Resource, book, website, tool, or step name, e.g. React Docs' },
+                  type: { type: 'STRING', description: 'Type of resource: book, link, tool, step, video, custom' },
+                  description: { type: 'STRING', description: 'Description or notes about this specific resource/step.' }
+                },
+                required: ['name']
+              }
+            }
+          }
+        },
+        timetableSuggestions: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              day: { type: 'STRING', description: 'Recommended day of the week to study/work on this, e.g. Monday, Tuesday. Choose a logical day if none is mentioned.' },
+              time: { type: 'STRING', description: 'Recommended time of the day in 24h format, e.g., 09:00, 15:30. Default to 09:00 if not specified.' },
+              activity: { type: 'STRING', description: 'Learning activity description.' },
+              notes: { type: 'STRING', description: 'Any extra notes.' }
+            },
+            required: ['day', 'activity']
+          }
+        }
+      },
+      required: ['title', 'summary', 'category']
+    };
 
     const tempFileName = `reel_${instagramId}_${Date.now()}.mp4`;
     const tempFilePath = path.join(this.tempDir, tempFileName);
@@ -150,6 +215,10 @@ class GeminiHandler {
       console.log(`[GEMINI] Downloading Reel from URL for user ${instagramId}...`);
       await this.downloadVideo(reelUrl, tempFilePath);
       console.log('[GEMINI] Download completed successfully');
+
+      if (!this.fileManager) {
+        throw new Error('GoogleAIFileManager is not initialized.');
+      }
 
       console.log('[GEMINI] Uploading Reel to Google AI File API...');
       const uploadResult = await this.fileManager.uploadFile(tempFilePath, {
@@ -174,50 +243,6 @@ class GeminiHandler {
         throw new Error(`Video processing failed on Gemini server. State: ${file.state}`);
       }
       console.log('[GEMINI] Video processing completed. Generating structured note...');
-
-      const responseSchema = {
-        type: 'OBJECT',
-        properties: {
-          title: { type: 'STRING', description: 'What is this video/reel about? E.g., Learn SQL in 10 Days' },
-          summary: { type: 'STRING', description: 'Brief transcription and summary of the key tips, steps, links, or advice shown in the reel.' },
-          category: { 
-            type: 'STRING', 
-            enum: ['study', 'project', 'resource', 'tips', 'other'], 
-            description: 'The category that matches the reel contents.' 
-          },
-          resourceDetails: {
-            type: 'OBJECT',
-            properties: {
-              resources: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    name: { type: 'STRING', description: 'Resource, book, website, tool, or step name, e.g. React Docs' },
-                    type: { type: 'STRING', description: 'Type of resource: book, link, tool, step, video, custom' },
-                    description: { type: 'STRING', description: 'Description or notes about this specific resource/step.' }
-                  },
-                  required: ['name']
-                }
-              }
-            }
-          },
-          timetableSuggestions: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                day: { type: 'STRING', description: 'Recommended day of the week to study/work on this, e.g. Monday, Tuesday. Choose a logical day if none is mentioned.' },
-                time: { type: 'STRING', description: 'Recommended time of the day in 24h format, e.g., 09:00, 15:30. Default to 09:00 if not specified.' },
-                activity: { type: 'STRING', description: 'Learning activity description.' },
-                notes: { type: 'STRING', description: 'Any extra notes.' }
-              },
-              required: ['day', 'activity']
-            }
-          }
-        },
-        required: ['title', 'summary', 'category']
-      };
 
       const model = this.genAI.getGenerativeModel({
         model: GEMINI_MODEL,
@@ -248,17 +273,60 @@ class GeminiHandler {
 
       const responseText = result.response.text();
       console.log('[GEMINI] Received structured JSON response');
+      return JSON.parse(responseText);
 
-      const parsedNote = JSON.parse(responseText);
-      return parsedNote;
     } catch (error) {
-      console.error('[GEMINI] Error transcribing Reel:', error);
+      console.error('[GEMINI] Video download or transcription failed:', error.message);
       
-      if (retries > 0) {
+      const isDownloadFailure = error.message.includes('Invalid content type') || 
+                                error.message.includes('status code 401') || 
+                                error.message.includes('redirect') ||
+                                error.message.includes('verification required') ||
+                                error.message.includes('checkpoint') ||
+                                error.message.includes('login failed');
+
+      if (retries > 0 && !isDownloadFailure) {
         console.log(`[GEMINI] Retrying transcription... (${retries} attempts left)`);
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        return this.transcribeReel(instagramId, reelUrl, retries - 1);
+        return this.transcribeReel(instagramId, reelUrl, captionText, retries - 1);
       }
+
+      if (captionText && captionText.trim().length > 0) {
+        console.log('[GEMINI] Falling back to caption-only analysis...');
+        try {
+          const model = this.genAI.getGenerativeModel({
+            model: GEMINI_MODEL,
+            safetySettings,
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseSchema: responseSchema
+            }
+          });
+
+          const prompt = `Analyze the caption text of an Instagram Reel shared by the user.
+          Reel URL: ${reelUrl}
+          Caption Content:
+          """
+          ${captionText}
+          """
+          Extract the main educational tips, learning steps, resources, links, or tasks described.
+          Format the output as a structured JSON object according to the schema.
+          If there is resource/learning data, populate resourceDetails.
+          Provide timetableSuggestions for scheduling this into the user's weekly timetable structure.`;
+
+          const result = await this.withTimeout(
+            model.generateContent(prompt),
+            API_TIMEOUT_MS
+          );
+
+          const responseText = result.response.text();
+          console.log('[GEMINI] Caption analysis completed successfully');
+          return JSON.parse(responseText);
+        } catch (fallbackError) {
+          console.error('[GEMINI] Caption fallback analysis also failed:', fallbackError.message);
+        }
+      }
+
       throw error;
     } finally {
       if (uploadedFileName) {

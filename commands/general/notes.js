@@ -12,16 +12,14 @@ module.exports = {
     try {
       const instagramId = message.sender.id;
 
-      // Handle detailed note lookup (e.g. !notes view 1 or !notes view <id>)
       if (args.length > 1 && args[0].toLowerCase() === 'view') {
         const query = args[1].trim();
         let note = null;
 
-        // Try viewing by ID first
         if (query.match(/^[0-9a-fA-F]{24}$/)) {
           note = await ReelNote.findById(query);
         } else {
-          // Try viewing by list index (from saved notes)
+          
           const idx = parseInt(query, 10);
           if (!isNaN(idx)) {
             const list = await ReelNote.find({ instagramId, saved: true }).sort({ savedAt: -1 }).limit(10);
@@ -60,7 +58,6 @@ module.exports = {
         return client.sendMessage(instagramId, fullText);
       }
 
-      // Default: List recent 10 SAVED notes
       const notes = await ReelNote.find({ instagramId, saved: true }).sort({ savedAt: -1 }).limit(10);
 
       if (notes.length === 0) {

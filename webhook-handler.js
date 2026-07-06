@@ -46,15 +46,6 @@ async function enablePageSubscriptions() {
   }
 }
 
-(async () => {
-  try {
-    await instagramClient.init();
-    await enablePageSubscriptions();
-  } catch (error) {
-    console.error('[WEBHOOK] Failed during client startup subscriptions hook:', error);
-  }
-})();
-
 function verifyWebhook(req, res) {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -79,7 +70,9 @@ function verifyWebhook(req, res) {
 function validateSignature(req) {
   const appSecret = process.env.INSTAGRAM_APP_SECRET;
   if (!appSecret) {
-    return true;
+    
+    console.error('[WEBHOOK] INSTAGRAM_APP_SECRET is not configured — rejecting webhook for safety.');
+    return false;
   }
 
   const signature = req.headers['x-hub-signature-256'];
@@ -91,6 +84,10 @@ function validateSignature(req) {
   try {
     const elements = signature.split('=');
     const signatureHash = elements[1];
+    if (!signatureHash) {
+      console.warn('[WEBHOOK] Malformed signature header (no hash after "=")');
+      return false;
+    }
     const rawBody = req.rawBody || '';
 
     const expectedHash = crypto
@@ -98,7 +95,12 @@ function validateSignature(req) {
       .update(rawBody)
       .digest('hex');
 
-    return signatureHash === expectedHash;
+    const sigBuf = Buffer.from(signatureHash, 'hex');
+    const expectedBuf = Buffer.from(expectedHash, 'hex');
+    if (sigBuf.length !== expectedBuf.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   } catch (error) {
     console.error('[WEBHOOK] Error validating signature:', error);
     return false;
@@ -115,6 +117,7 @@ async function processWebhook(req, res) {
     }
 
     const body = req.body;
+    console.log('[WEBHOOK] Signature validated. Processing incoming Instagram event...');
     if (body.object !== 'instagram') {
       return;
     }
@@ -172,10 +175,18 @@ async function handleMessage(event) {
     }
 
     let reelUrl = null;
+    let reelCaption = null;
     if (message.attachments && Array.isArray(message.attachments)) {
-      const shareAttachment = message.attachments.find(att => att.type === 'share');
-      if (shareAttachment && shareAttachment.payload && shareAttachment.payload.url) {
-        reelUrl = shareAttachment.payload.url;
+      const shareAttachment = message.attachments.find(att => 
+        att.type === 'share' || 
+        att.type === 'ig_post' ||
+        att.type === 'ig_reel'
+      );
+      if (shareAttachment && shareAttachment.payload) {
+        reelUrl = shareAttachment.payload.url || null;
+        if (typeof shareAttachment.payload.title === 'string' && shareAttachment.payload.title.trim().length > 0) {
+          reelCaption = shareAttachment.payload.title;
+        }
       }
     }
 
@@ -189,6 +200,7 @@ async function handleMessage(event) {
       messageId: message.mid,
       platform: 'instagram',
       reelUrl: reelUrl,
+      reelCaption: reelCaption,
       is_echo: message.is_echo || false
     };
 

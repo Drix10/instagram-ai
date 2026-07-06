@@ -1,12 +1,16 @@
 const User = require('../Models/User');
 const ReelNote = require('../Models/ReelNote');
 
+const PROFILE_CACHE_MAX = 500; 
+const PROFILE_CACHE_TTL = 3600000; 
+const ACTIVE_PROCESSING_TTL = 5 * 60 * 1000; 
+
 class CoreClient {
   constructor() {
     this.prefix = process.env.PREFIX || '!';
     this.commands = new Map();
     this.profileCache = new Map();
-    this.activeProcessing = new Set();
+    this.activeProcessing = new Map(); 
     this.initialized = false;
   }
 
@@ -46,6 +50,45 @@ class CoreClient {
     } catch (error) {
       console.error('[INSTAGRAM] Error during initialization:', error);
     }
+  }
+
+  isProcessing(url) {
+    if (!this.activeProcessing.has(url)) return false;
+    const startedAt = this.activeProcessing.get(url);
+    if (Date.now() - startedAt > ACTIVE_PROCESSING_TTL) {
+      
+      console.warn(`[CORE] Evicting stale activeProcessing entry for URL (${Math.round((Date.now() - startedAt) / 1000)}s old)`);
+      this.activeProcessing.delete(url);
+      return false;
+    }
+    return true;
+  }
+
+  markProcessing(url) {
+    this.activeProcessing.set(url, Date.now());
+  }
+
+  clearProcessing(url) {
+    this.activeProcessing.delete(url);
+  }
+
+  getCachedProfile(userId) {
+    if (!this.profileCache.has(userId)) return null;
+    const entry = this.profileCache.get(userId);
+    if (Date.now() - entry.timestamp > PROFILE_CACHE_TTL) {
+      this.profileCache.delete(userId);
+      return null;
+    }
+    return entry.data;
+  }
+
+  setCachedProfile(userId, data) {
+    
+    if (this.profileCache.size >= PROFILE_CACHE_MAX && !this.profileCache.has(userId)) {
+      const oldestKey = this.profileCache.keys().next().value;
+      this.profileCache.delete(oldestKey);
+    }
+    this.profileCache.set(userId, { data, timestamp: Date.now() });
   }
 
   async processMessage(message) {

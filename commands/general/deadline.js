@@ -18,7 +18,7 @@ module.exports = {
       }
 
       if (args.length === 0 || args[0].toLowerCase() === 'list') {
-        // List active deadlines
+        
         const activeBlockers = user.blockers.filter(b => !b.notified);
         
         if (activeBlockers.length === 0) {

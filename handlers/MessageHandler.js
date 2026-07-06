@@ -1,25 +1,30 @@
 const User = require('../Models/User');
 const ReelNote = require('../Models/ReelNote');
+const axios = require('axios');
 
 class MessageHandler {
   constructor(client) {
     this.client = client;
-    this.userQueues = new Map(); // userId -> Array of messages (Per-user sequential queuing)
+    this.userQueues = new Map();
   }
 
   async processMessage(message) {
     const userId = message.sender.id;
 
-    // Retrieve or create a message queue for this specific user
+    if (this.client.rateLimiter && !this.client.rateLimiter.canProcess(userId)) {
+      console.warn(`[MESSAGE_ROUTER] User ${userId} exceeded rate limit. Dropping message.`);
+      this.client.sendMessage(
+        userId,
+        "⚠️ You are sending messages too quickly. Please wait a moment! ⏳"
+      ).catch(() => {});
+      return false;
+    }
+
     if (!this.userQueues.has(userId)) {
-      this.userQueues.set(userId, []);
-      this.userQueues.get(userId).push(message);
-      
-      // Start async processing loop for this user
+      this.userQueues.set(userId, [message]);
       setImmediate(() => this.processUserQueue(userId));
     } else {
       const queue = this.userQueues.get(userId);
-      // Enforce a sensible queue buffer limit per user to protect memory
       if (queue.length < 50) {
         queue.push(message);
       } else {
@@ -40,7 +45,6 @@ class MessageHandler {
       return;
     }
 
-    // Peek at the first message in the queue
     const message = queue[0];
 
     try {
@@ -51,10 +55,8 @@ class MessageHandler {
         await this.client.sendMessage(userId, 'An error occurred while processing your message.');
       } catch (e) {}
     } finally {
-      // Remove the message we just processed
       queue.shift();
       
-      // Schedule the next message for this user recursively
       if (queue.length > 0) {
         setImmediate(() => this.processUserQueue(userId));
       } else {
@@ -71,7 +73,6 @@ class MessageHandler {
     const isPostback = message.isPostback === true;
     const instagramId = message.sender.id;
 
-    // 1. Ensure user profile exists in database
     let user = await User.findOne({ instagramId });
     if (!user) {
       user = new User({
@@ -81,23 +82,42 @@ class MessageHandler {
       await user.save();
     }
 
-    // 2. Handle Shared Reel processing
     if (message.reelUrl) {
-      if (this.client.activeProcessing.has(message.reelUrl)) {
+      if (this.client.isProcessing(message.reelUrl)) {
         console.log(`[MESSAGE_ROUTER] Reel URL is already being processed: ${message.reelUrl}`);
+        await this.client.sendMessage(
+          instagramId,
+          "⏳ This Reel is already being analyzed. Please wait for the results!"
+        ).catch(() => {});
         return;
       }
-      this.client.activeProcessing.add(message.reelUrl);
+      this.client.markProcessing(message.reelUrl);
 
       try {
         await this.client.sendMessage(
           instagramId,
-          "📥 Reel received! Downloading and transcribing details using Gemini AI... This can take 15-30 seconds. 🤖🎥"
+          "📥 Reel received! Analyzing contents using Gemini AI... 🤖🎥"
         );
 
-        const parsed = await this.client.geminiHandler.transcribeReel(instagramId, message.reelUrl);
+        let reelCaptionText = message.reelCaption;
+        if (!reelCaptionText && message.reelUrl) {
+          try {
+            console.log(`[MESSAGE_ROUTER] Webhook caption missing. Fetching caption from oEmbed for: ${message.reelUrl}`);
+            const oembedRes = await axios.get(
+              `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(message.reelUrl)}`,
+              { timeout: 8000 }
+            );
+            if (oembedRes.data && oembedRes.data.title) {
+              reelCaptionText = oembedRes.data.title;
+              console.log(`[MESSAGE_ROUTER] Extracted caption via oEmbed successfully`);
+            }
+          } catch (oembedErr) {
+            console.warn(`[MESSAGE_ROUTER] Failed to fetch oEmbed caption: ${oembedErr.message}`);
+          }
+        }
+
+        const parsed = await this.client.geminiHandler.transcribeReel(instagramId, message.reelUrl, reelCaptionText);
         
-        // Save the raw note
         const note = new ReelNote({
           instagramId,
           reelUrl: message.reelUrl,
@@ -109,7 +129,6 @@ class MessageHandler {
         });
         await note.save();
 
-        // Print transcription card
         let details = `📝 【REEL NOTES】 📝\n\n` +
           `📌 Topic: ${parsed.title}\n` +
           `📂 Category: ${parsed.category?.toUpperCase() || 'RESOURCE'}\n\n` +
@@ -126,7 +145,6 @@ class MessageHandler {
 
         await this.client.sendMessage(instagramId, details);
 
-        // Send action buttons
         await this.client.sendButtonTemplate(
           instagramId,
           `Would you like to save this to your timetable?`,
@@ -157,12 +175,11 @@ class MessageHandler {
           `❌ Failed to analyze Reel: ${error.message || 'Unknown processing error'}. Please try again.`
         );
       } finally {
-        this.client.activeProcessing.delete(message.reelUrl);
+        this.client.clearProcessing(message.reelUrl);
       }
       return;
     }
 
-    // 3. Handle standard text commands vs AI conversations
     const text = message.text.trim();
 
     if (text.startsWith(this.client.prefix) || isPostback) {
@@ -190,7 +207,6 @@ class MessageHandler {
       }
     }
 
-    // 4. NLP Chatbot Mode - Route direct conversation to Gemini Assistant with blocker context
     if (text.length > 0) {
       try {
         const response = await this.client.geminiHandler.generateChatResponse(

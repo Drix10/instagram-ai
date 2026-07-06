@@ -3,12 +3,15 @@ const ReelNote = require('../Models/ReelNote');
 
 function getNextDateForDayAndTime(dayName, timeStr) {
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const targetDayIndex = days.indexOf(dayName.toLowerCase());
+  let cleanDay = dayName ? dayName.trim().toLowerCase() : '';
+  if (cleanDay.endsWith('s')) {
+    cleanDay = cleanDay.slice(0, -1);
+  }
+  const targetDayIndex = days.indexOf(cleanDay);
   
   const now = new Date();
   const resultDate = new Date();
   
-  // Parse time e.g., "18:30" or "08:00 AM" robustly
   const timeParts = timeStr ? timeStr.split(':') : [];
   let hours = 9;
   let minutes = 0;
@@ -23,15 +26,13 @@ function getNextDateForDayAndTime(dayName, timeStr) {
   resultDate.setHours(hours, minutes, 0, 0);
 
   if (targetDayIndex === -1) {
-    // If invalid day, fallback to tomorrow at target time
     resultDate.setDate(now.getDate() + 1);
     return resultDate;
   }
 
-  // Calculate day difference
   let dayDifference = targetDayIndex - now.getDay();
   if (dayDifference < 0 || (dayDifference === 0 && now.getTime() >= resultDate.getTime())) {
-    dayDifference += 7; // push to next week
+    dayDifference += 7; 
   }
 
   resultDate.setDate(now.getDate() + dayDifference);
@@ -70,7 +71,6 @@ module.exports = {
       let skippedCount = 0;
       let successMsg = `⏰ *Weekly Reminders Configured!* ⏰\n\n`;
 
-      // Schedule reminders for each suggestion, checking for duplicate active alerts
       note.timetableSuggestions.forEach(sug => {
         const nextAlert = getNextDateForDayAndTime(sug.day, sug.time);
         

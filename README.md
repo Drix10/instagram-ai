@@ -1,5 +1,5 @@
 <p align="center">
-    <h1 align="center">ReeF AI - Instagram Timetable & Reel NoteTaker</h1>
+    <h1 align="center">ReeF - Instagram Timetable & Reel NoteTaker</h1>
 </p>
 <p align="center">
     <em>Automated Study Scheduling & Reel Transcription Inside Instagram DMs</em>
@@ -10,22 +10,31 @@
 	<img src="https://img.shields.io/badge/Database-MongoDB-blue" alt="Database Version">
 	<img src="https://img.shields.io/badge/AI-Gemini_3.5_Flash-orange" alt="LLM Version">
 </p>
-<p align="center">
-	<img src="https://img.shields.io/badge/Framework-Express-blue" alt="Framework Badge">
-	<img src="https://img.shields.io/badge/Frontend-Instagram_MESSAGING_API-red" alt="Interface Badge">
-	<img src="https://img.shields.io/badge/Backend-Node.js_with_Mongoose-blue" alt="Backend Badge">
-	<img src="https://img.shields.io/badge/Parser-instagram_private_api-black" alt="Library Badge">
-</p>
 
 ---
 
-## Description
+**Your Instagram "Saved" folder isn't a learning system. It's a graveyard.**
 
-### What is ReeF AI?
-ReeF AI is an intelligent assistant designed to automatically organize your study workflows directly inside your Instagram DMs. When a user shares educational or resource-focused Reels, the assistant downloads the video, transcribes and summarizes the content using Gemini 3.5 Flash, extracts key links or steps, adds them to a weekly schedule, and structures study reminders around deadlines.
+Every time you find a great coding tutorial, productivity tip, or educational Reel, you hit **Save** and tell yourself:
 
-### What problem does it solve?
-ReeF AI resolves the friction of converting short-form educational content (like Instagram Reels) into actual, actionable study routines. Often, useful resources or guides are lost in bookmarks or saved folders. This bot transcribes those items immediately, helps you schedule study times, sets task deadlines, and sends you personalized learning boards once your milestone dates are reached.
+> "I'll watch it later."
+
+Later almost never comes.
+
+**What if Instagram itself became your study companion instead of just another source of distractions?**
+
+That's why I built **ReeF**.
+
+An AI-powered assistant that lives inside Instagram DMs and transforms educational Reels into an actual learning workflow:
+
+* 📩 **Share** an educational Reel with ReeF.
+* 🧠 **Ingest & Analyze**: It transcribes the video, extracts the important concepts, links, and action items.
+* 📚 **Organize**: It converts everything into structured study notes you can actually revisit.
+* 📅 **Schedule**: It automatically builds a study timetable around your schedule.
+* ⏰ **Remind**: It reminds you when it's time to learn, not just when there's another Reel to watch.
+* 📝 **Custom Notes**: If you don't have a Reel, simply send your own notes or ideas, and ReeF organizes them the same way.
+
+The idea isn't to fight social media. It's to make the educational content we're already consuming actually stick.
 
 ---
 

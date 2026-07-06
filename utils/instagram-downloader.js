@@ -199,7 +199,7 @@ class InstagramDownloader {
   }
 
   async downloadFromUrl(videoUrl, targetPath) {
-    console.log(`[IG-DL] Downloading video to: ${path.basename(targetPath)}`);
+    console.log(`[IG-DL] Downloading media to: ${path.basename(targetPath)}`);
 
     const response = await axios({
       url: videoUrl,
@@ -212,16 +212,16 @@ class InstagramDownloader {
     });
 
     const contentType = response.headers['content-type'] || '';
-    const isValidType = contentType.startsWith('video/') || contentType === 'application/octet-stream' || contentType === '';
+    const isValidType = contentType.startsWith('video/') || contentType.startsWith('image/') || contentType === 'application/octet-stream' || contentType === '';
     if (!isValidType) {
       try { response.data.destroy(); } catch (e) {}
-      throw new Error(`Invalid content type: "${contentType}" (expected video)`);
+      throw new Error(`Invalid content type: "${contentType}" (expected video/image)`);
     }
 
     const contentLength = parseInt(response.headers['content-length'], 10);
     if (!isNaN(contentLength) && contentLength > MAX_VIDEO_SIZE) {
       try { response.data.destroy(); } catch (e) {}
-      throw new Error(`Video too large: ${(contentLength / 1024 / 1024).toFixed(1)}MB (limit: ${MAX_VIDEO_SIZE / 1024 / 1024}MB)`);
+      throw new Error(`Media too large: ${(contentLength / 1024 / 1024).toFixed(1)}MB (limit: ${MAX_VIDEO_SIZE / 1024 / 1024}MB)`);
     }
 
     return new Promise((resolve, reject) => {
@@ -250,7 +250,7 @@ class InstagramDownloader {
       response.data.on('data', (chunk) => {
         bytesWritten += chunk.length;
         if (bytesWritten > MAX_VIDEO_SIZE) {
-          cleanup(new Error('Video exceeded size limit during download'));
+          cleanup(new Error('Media exceeded size limit during download'));
         }
       });
 
@@ -263,9 +263,9 @@ class InstagramDownloader {
 
         try {
           const stats = fs.statSync(targetPath);
-          if (stats.size < 1024) {
+          if (stats.size < 100) {
             fs.unlinkSync(targetPath);
-            reject(new Error('Downloaded file too small to be a valid video'));
+            reject(new Error('Downloaded file too small to be a valid media file'));
             return;
           }
           console.log(`[IG-DL] Download complete: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
@@ -284,6 +284,109 @@ class InstagramDownloader {
       });
 
     });
+  }
+
+  async resolveMediaItems(instagramUrl) {
+    await this.login();
+
+    const shortcode = this.extractShortcode(instagramUrl);
+    if (!shortcode) {
+      throw new Error(`Could not extract shortcode from URL: ${instagramUrl}`);
+    }
+
+    const mediaId = this.shortcodeToMediaId(shortcode);
+    console.log(`[IG-DL] Resolving media info for shortcode: ${shortcode} (media ID: ${mediaId})`);
+
+    const extractItems = (mediaInfo) => {
+      const item = mediaInfo.items[0];
+      const caption = item.caption ? item.caption.text : '';
+      const author = item.user ? item.user.username : '';
+      
+      const itemsList = [];
+      if (item.media_type === 8 && item.carousel_media) {
+        for (const sub of item.carousel_media.slice(0, 10)) {
+          if (sub.media_type === 2 && sub.video_versions && sub.video_versions.length > 0) {
+            itemsList.push({ type: 'video', url: sub.video_versions[0].url, mimeType: 'video/mp4' });
+          } else if (sub.media_type === 1 && sub.image_versions2 && sub.image_versions2.candidates && sub.image_versions2.candidates.length > 0) {
+            itemsList.push({ type: 'image', url: sub.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
+          }
+        }
+      } else if (item.media_type === 2 && item.video_versions && item.video_versions.length > 0) {
+        itemsList.push({ type: 'video', url: item.video_versions[0].url, mimeType: 'video/mp4' });
+      } else if (item.media_type === 1 && item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates.length > 0) {
+        itemsList.push({ type: 'image', url: item.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
+      }
+
+      return {
+        items: itemsList,
+        caption,
+        author
+      };
+    };
+
+    try {
+      const mediaInfo = await this.ig.media.info(mediaId);
+      if (!mediaInfo || !mediaInfo.items || mediaInfo.items.length === 0) {
+        throw new Error('No media info returned from Instagram API');
+      }
+      return extractItems(mediaInfo);
+    } catch (err) {
+      const isSessionExpired = err.name === 'IgLoginRequiredError' || 
+                               err.name === 'IgCheckpointError' ||
+                               err.name === 'IgChallengeRequiredError' ||
+                               (err.message && (err.message.includes('login_required') || err.message.includes('checkpoint')));
+
+      if (isSessionExpired) {
+        console.warn('[IG-DL] Session expired or checkpoint triggered. Re-logging in...');
+        this.isLoggedIn = false;
+        try { fs.unlinkSync(SESSION_FILE); } catch (e) {}
+        
+        await this.login();
+        
+        const mediaInfo = await this.ig.media.info(mediaId);
+        if (mediaInfo && mediaInfo.items && mediaInfo.items.length > 0) {
+          return extractItems(mediaInfo);
+        }
+      }
+      throw new Error(`Failed to resolve media info: ${err.message}`);
+    }
+  }
+
+  async downloadMedia(instagramUrl, targetDir, baseName) {
+    const resolved = await this.resolveMediaItems(instagramUrl);
+    const downloadedFiles = [];
+
+    try {
+      for (let i = 0; i < resolved.items.length; i++) {
+        const item = resolved.items[i];
+        const ext = item.type === 'video' ? 'mp4' : 'jpg';
+        const filePath = path.join(targetDir, `${baseName}_${i}.${ext}`);
+        
+        console.log(`[IG-DL] Downloading item ${i + 1}/${resolved.items.length} (${item.type})`);
+        await this.downloadFromUrl(item.url, filePath);
+        
+        downloadedFiles.push({
+          path: filePath,
+          mimeType: item.mimeType
+        });
+      }
+
+      return {
+        mediaFiles: downloadedFiles,
+        caption: resolved.caption,
+        author: resolved.author
+      };
+    } catch (err) {
+      console.error(`[IG-DL] downloadMedia failed, cleaning up partial downloads...`);
+      for (const file of downloadedFiles) {
+        try {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (unlinkErr) {}
+      }
+      throw err;
+    }
   }
 
   async downloadReel(instagramUrl, targetPath) {

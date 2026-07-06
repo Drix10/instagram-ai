@@ -207,42 +207,72 @@ class GeminiHandler {
       required: ['title', 'summary', 'category']
     };
 
-    const tempFileName = `reel_${instagramId}_${Date.now()}.mp4`;
-    const tempFilePath = path.join(this.tempDir, tempFileName);
-    let uploadedFileName = null;
+    const baseName = `reel_${instagramId}_${Date.now()}`;
+    const igDownloader = require('../utils/instagram-downloader');
+    
+    let mediaFiles = [];
+    let uploadedFiles = [];
+    let caption = captionText || '';
 
     try {
-      console.log(`[GEMINI] Downloading Reel from URL for user ${instagramId}...`);
-      await this.downloadVideo(reelUrl, tempFilePath);
-      console.log('[GEMINI] Download completed successfully');
+      console.log(`[GEMINI] Downloading post media from URL for user ${instagramId}...`);
+      try {
+        const result = await igDownloader.downloadMedia(reelUrl, this.tempDir, baseName);
+        mediaFiles = result.mediaFiles || [];
+        if (result.caption) {
+          caption = result.caption;
+        }
+        console.log(`[GEMINI] Download completed. Ingested ${mediaFiles.length} media files`);
+      } catch (igErr) {
+        console.warn(`[GEMINI] IG media download failed: ${igErr.message}. Falling back to direct video download...`);
+        const tempFileName = `${baseName}_0.mp4`;
+        const tempFilePath = path.join(this.tempDir, tempFileName);
+        mediaFiles = [{ path: tempFilePath, mimeType: 'video/mp4' }];
+        await this.downloadVideo(reelUrl, tempFilePath);
+      }
 
       if (!this.fileManager) {
         throw new Error('GoogleAIFileManager is not initialized.');
       }
 
-      console.log('[GEMINI] Uploading Reel to Google AI File API...');
-      const uploadResult = await this.fileManager.uploadFile(tempFilePath, {
-        mimeType: 'video/mp4',
-        displayName: `Reel_${instagramId}`,
-      });
-      
-      uploadedFileName = uploadResult.file.name;
-      const fileUri = uploadResult.file.uri;
-      console.log(`[GEMINI] Uploaded. File Name: ${uploadedFileName}, URI: ${fileUri}`);
+      // Upload files to Google AI Storage
+      for (let i = 0; i < mediaFiles.length; i++) {
+        const media = mediaFiles[i];
+        console.log(`[GEMINI] Uploading media chunk ${i + 1}/${mediaFiles.length} (${media.mimeType}) to Google AI File API...`);
+        
+        const uploadResult = await this.fileManager.uploadFile(media.path, {
+          mimeType: media.mimeType,
+          displayName: `${baseName}_${i}`,
+        });
 
-      console.log('[GEMINI] Waiting for video processing to complete...');
-      let file = await this.fileManager.getFile(uploadedFileName);
-      let attempts = 0;
-      while (file.state === 'PROCESSING' && attempts < 20) {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        file = await this.fileManager.getFile(uploadedFileName);
-        attempts++;
+        // Wait for processing only if video. Images are active instantly.
+        let isVideo = media.mimeType.startsWith('video/');
+        let file = await this.fileManager.getFile(uploadResult.file.name);
+        
+        if (isVideo) {
+          let attempts = 0;
+          while (file.state === 'PROCESSING' && attempts < 20) {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            file = await this.fileManager.getFile(uploadResult.file.name);
+            attempts++;
+          }
+          if (file.state !== 'ACTIVE') {
+            throw new Error(`Video processing failed on Gemini server. State: ${file.state}`);
+          }
+        }
+        
+        uploadedFiles.push({
+          name: uploadResult.file.name,
+          uri: uploadResult.file.uri,
+          mimeType: media.mimeType
+        });
       }
 
-      if (file.state !== 'ACTIVE') {
-        throw new Error(`Video processing failed on Gemini server. State: ${file.state}`);
+      if (uploadedFiles.length === 0) {
+        throw new Error('All media file uploads to Gemini failed.');
       }
-      console.log('[GEMINI] Video processing completed. Generating structured note...');
+
+      console.log('[GEMINI] Media uploads active. Generating structured note...');
 
       const model = this.genAI.getGenerativeModel({
         model: GEMINI_MODEL,
@@ -253,26 +283,33 @@ class GeminiHandler {
         }
       });
 
-      const prompt = `You are a professional video analyzer and transcription assistant.
-      Analyze this Instagram Reel video and extract the following:
-      1. Title: Create a concise, clean, search-friendly title of what the video teaches (exclude hashtag symbols, emojis, and social media clutter).
-      2. Summary: Provide a clean, markdown-formatted summary of the video. Use bullet points and clear section headers to make it easily readable on narrow mobile screens (Instagram DM). Detail the core concepts, step-by-step guides, or voice-overs.
+      let prompt = `You are a professional video and image analyzer and transcription assistant.
+      Analyze the shared Instagram media files (which may contain one or multiple photos/videos) and extract the following:
+      1. Title: Create a concise, clean, search-friendly title of what the shared post teaches (exclude hashtag symbols, emojis, and social media clutter).
+      2. Summary: Provide a clean, markdown-formatted summary of the post contents. Use bullet points and clear section headers to make it easily readable on narrow mobile screens (Instagram DM). Detail the core concepts, step-by-step guides, voice-overs, or text descriptions.
       3. Category: Select the best match from 'study', 'project', 'resource', 'tips', or 'other'.
       4. Resources & Links: Extract any specific website links, tools, books, or steps mentioned.
       5. Timetable Suggestions: Provide logical timetable slots to schedule this study content in the user's weekly timetable structure (recommend a day of week like 'Monday', specify a logical 24h time format like '14:00', and write a clear, active activity description).
       
       Format the entire output as a structured JSON object complying with the required response schema.`;
 
+      if (caption && caption.trim()) {
+        prompt += `\n\nAdditional Context / Post Caption Text:\n"""\n${caption}\n"""`;
+      }
+
+      const contentsList = [];
+      for (const f of uploadedFiles) {
+        contentsList.push({
+          fileData: {
+            mimeType: f.mimeType,
+            fileUri: f.uri
+          }
+        });
+      }
+      contentsList.push({ text: prompt });
+
       const result = await this.withTimeout(
-        model.generateContent([
-          {
-            fileData: {
-              mimeType: file.mimeType,
-              fileUri: file.uri,
-            },
-          },
-          { text: prompt },
-        ]),
+        model.generateContent(contentsList),
         API_TIMEOUT_MS
       );
 
@@ -281,7 +318,7 @@ class GeminiHandler {
       return JSON.parse(responseText);
 
     } catch (error) {
-      console.error('[GEMINI] Video download or transcription failed:', error.message);
+      console.error('[GEMINI] Media analysis or transcription failed:', error.message);
       
       const isDownloadFailure = error.message.includes('Invalid content type') || 
                                 error.message.includes('status code 401') || 
@@ -296,7 +333,7 @@ class GeminiHandler {
         return this.transcribeReel(instagramId, reelUrl, captionText, retries - 1);
       }
 
-      if (captionText && captionText.trim().length > 0) {
+      if (caption && caption.trim().length > 0) {
         console.log('[GEMINI] Falling back to caption-only analysis...');
         try {
           const model = this.genAI.getGenerativeModel({
@@ -313,7 +350,7 @@ class GeminiHandler {
           Reel URL: ${reelUrl}
           Caption Content:
           """
-          ${captionText}
+          ${caption}
           """
 
           Extract and structure the following details:
@@ -340,15 +377,20 @@ class GeminiHandler {
 
       throw error;
     } finally {
-      if (uploadedFileName) {
-        console.log(`[GEMINI] Cleaning up file from AI storage: ${uploadedFileName}...`);
-        await this.fileManager.deleteFile(uploadedFileName).catch(err => {
-          console.warn('[GEMINI] Error deleting file from AI storage:', err.message);
-        });
+      // Clean up files from Google AI File storage
+      for (const f of uploadedFiles) {
+        if (f && f.name) {
+          console.log(`[GEMINI] Cleaning up file from AI storage: ${f.name}...`);
+          await this.fileManager.deleteFile(f.name).catch(err => {
+            console.warn('[GEMINI] Error deleting file from AI storage:', err.message);
+          });
+        }
       }
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-        console.log('[GEMINI] Cleaned up local temp file');
+      // Clean up local temp downloaded files
+      for (const media of mediaFiles) {
+        if (media && media.path && fs.existsSync(media.path)) {
+          fs.unlink(media.path, () => {});
+        }
       }
     }
   }

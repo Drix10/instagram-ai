@@ -145,9 +145,17 @@ class CoreClient {
               });
 
               if (reminder.repeat === 'daily') {
-                reminder.time = new Date(reminder.time.getTime() + 24 * 60 * 60 * 1000);
+                let nextTime = new Date(reminder.time.getTime() + 24 * 60 * 60 * 1000);
+                while (nextTime <= now) {
+                  nextTime = new Date(nextTime.getTime() + 24 * 60 * 60 * 1000);
+                }
+                reminder.time = nextTime;
               } else if (reminder.repeat === 'weekly') {
-                reminder.time = new Date(reminder.time.getTime() + 7 * 24 * 60 * 60 * 1000);
+                let nextTime = new Date(reminder.time.getTime() + 7 * 24 * 60 * 60 * 1000);
+                while (nextTime <= now) {
+                  nextTime = new Date(nextTime.getTime() + 7 * 24 * 60 * 60 * 1000);
+                }
+                reminder.time = nextTime;
               } else {
                 reminder.active = false;
               }
@@ -214,7 +222,7 @@ class CoreClient {
       }
     };
 
-    setTimeout(checkScheduler, 60 * 1000);
+    checkScheduler();
   }
 }
 

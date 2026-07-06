@@ -2,7 +2,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const GEMINI_MODEL = 'google/gemini-3.5-flash';
+const AI_MODEL = 'google/gemini-3.5-flash';
 const API_TIMEOUT_MS = 60000;
 
 class AIHandler {
@@ -276,7 +276,7 @@ class AIHandler {
       ];
 
       const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
-        model: GEMINI_MODEL,
+        model: AI_MODEL,
         messages: messages,
         response_format: { type: 'json_object' }
       }, API_TIMEOUT_MS);
@@ -324,7 +324,7 @@ class AIHandler {
           Format the output as a structured JSON object according to the response schema.`;
 
           const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
-            model: GEMINI_MODEL,
+            model: AI_MODEL,
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' }
           }, API_TIMEOUT_MS);
@@ -423,7 +423,7 @@ class AIHandler {
       messages.push({ role: 'user', content: latestInput });
 
       const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
-        model: GEMINI_MODEL,
+        model: AI_MODEL,
         messages: messages,
         response_format: { type: 'json_object' }
       }, API_TIMEOUT_MS);

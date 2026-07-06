@@ -1,7 +1,7 @@
 {
   "name": "instagram-reel-timetable-bot",
   "version": "1.0.0",
-  "description": "Instagram DM bot that transcribes shared educational Reels to build a learning timetable, manage deadlines, and set study reminders using Gemini AI.",
+  "description": "Instagram DM bot that transcribes shared educational Reels to build a learning timetable, manage deadlines, and set study reminders using AI.",
   "main": "index.js",
   "scripts": {
     "build": "node --check index.js",

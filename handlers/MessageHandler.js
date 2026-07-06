@@ -96,7 +96,7 @@ class MessageHandler {
       try {
         await this.client.sendMessage(
           instagramId,
-          "📥 Reel received! Analyzing contents using Meshapi's Gemini AI... 🤖🎥"
+          "📥 Reel received! Analyzing contents using AI... 🤖🎥"
         );
 
         let reelCaptionText = message.reelCaption;
@@ -417,7 +417,7 @@ class MessageHandler {
 
         await this.client.sendMessage(instagramId, replyText);
       } catch (chatErr) {
-        console.error('[MESSAGE_ROUTER] Gemini Chatbot failed:', chatErr);
+        console.error('[MESSAGE_ROUTER] AI Chatbot failed:', chatErr);
       }
     }
   }

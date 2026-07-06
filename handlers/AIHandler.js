@@ -1,40 +1,16 @@
-const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
-const { GoogleAIFileManager } = require('@google/generative-ai/server');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const GEMINI_MODEL = 'google/gemini-3.5-flash';
 const API_TIMEOUT_MS = 60000;
 
-const safetySettings = [
-  { 
-    category: HarmCategory.HARM_CATEGORY_HARASSMENT, 
-    threshold: HarmBlockThreshold.BLOCK_NONE 
-  },
-  { 
-    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, 
-    threshold: HarmBlockThreshold.BLOCK_NONE 
-  },
-  { 
-    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, 
-    threshold: HarmBlockThreshold.BLOCK_NONE 
-  },
-  { 
-    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, 
-    threshold: HarmBlockThreshold.BLOCK_NONE 
-  }
-];
-
-class GeminiHandler {
+class AIHandler {
   constructor(client) {
     this.client = client;
-    this.apiKey = process.env.GEMINI_API_KEY;
-    if (this.apiKey) {
-      this.genAI = new GoogleGenerativeAI(this.apiKey);
-      this.fileManager = new GoogleAIFileManager(this.apiKey);
-    } else {
-      console.warn('[GEMINI] Missing GEMINI_API_KEY environment variable. AI features will not work.');
+    this.apiKey = process.env.MESH_API_KEY;
+    if (!this.apiKey) {
+      console.warn('[AI] Missing MESH_API_KEY environment variable. AI features will not work.');
     }
     
     this.tempDir = path.join(__dirname, '../temp');
@@ -43,23 +19,57 @@ class GeminiHandler {
     }
   }
 
+  cleanJsonText(text) {
+    let clean = text.trim();
+    if (clean.startsWith('```')) {
+      const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (match && match[1]) {
+        clean = match[1].trim();
+      }
+    }
+    return clean;
+  }
+
+  async postWithTimeout(url, data, timeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await axios.post(url, data, {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
+      });
+      return response;
+    } catch (err) {
+      if (err.name === 'CanceledError' || axios.isCancel(err) || err.code === 'ERR_CANCELED') {
+        throw new Error(`API operation timeout after ${timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   async downloadVideo(url, targetPath) {
-    
     if (url.includes('instagram.com/')) {
       try {
         const igDownloader = require('../utils/instagram-downloader');
-        console.log(`[GEMINI] Downloading Reel via authenticated IG session for: ${url}`);
+        console.log(`[AI] Downloading Reel via authenticated IG session for: ${url}`);
         await igDownloader.downloadReel(url, targetPath);
-        console.log(`[GEMINI] Download completed successfully via IG login method`);
+        console.log(`[AI] Download completed successfully via IG login method`);
         return;
       } catch (igErr) {
-        console.warn(`[GEMINI] IG login download failed: ${igErr.message}. Trying fallback...`);
-        
+        console.warn(`[AI] IG login download failed: ${igErr.message}. Trying fallback...`);
       }
     }
 
     const downloadUrl = url;
-    console.log(`[GEMINI] Downloading video via direct URL: ${downloadUrl.substring(0, 80)}...`);
+    console.log(`[AI] Downloading video via direct URL: ${downloadUrl.substring(0, 80)}...`);
 
     const response = await axios({
       url: downloadUrl,
@@ -144,23 +154,9 @@ class GeminiHandler {
     });
   }
 
-  withTimeout(promise, timeoutMs) {
-    let timer;
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`API operation timeout after ${timeoutMs}ms`)),
-        timeoutMs
-      );
-    });
-
-    return Promise.race([promise, timeoutPromise]).finally(() => {
-      clearTimeout(timer);
-    });
-  }
-
   async transcribeReel(instagramId, reelUrl, captionText, retries = 2) {
-    if (!this.genAI) {
-      throw new Error('Gemini API is not initialized. Please configure GEMINI_API_KEY.');
+    if (!this.apiKey) {
+      throw new Error('Mesh API key is not configured. Please add MESH_API_KEY in settings.');
     }
 
     const responseSchema = {
@@ -211,78 +207,28 @@ class GeminiHandler {
     const igDownloader = require('../utils/instagram-downloader');
     
     let mediaFiles = [];
-    let uploadedFiles = [];
     let caption = captionText || '';
 
     try {
-      console.log(`[GEMINI] Downloading post media from URL for user ${instagramId}...`);
+      console.log(`[AI] Downloading post media from URL for user ${instagramId}...`);
       try {
         const result = await igDownloader.downloadMedia(reelUrl, this.tempDir, baseName);
         mediaFiles = result.mediaFiles || [];
         if (result.caption) {
           caption = result.caption;
         }
-        console.log(`[GEMINI] Download completed. Ingested ${mediaFiles.length} media files`);
+        console.log(`[AI] Download completed. Ingested ${mediaFiles.length} media files`);
       } catch (igErr) {
-        console.warn(`[GEMINI] IG media download failed: ${igErr.message}. Falling back to direct video download...`);
+        console.warn(`[AI] IG media download failed: ${igErr.message}. Falling back to direct video download...`);
         const tempFileName = `${baseName}_0.mp4`;
         const tempFilePath = path.join(this.tempDir, tempFileName);
         mediaFiles = [{ path: tempFilePath, mimeType: 'video/mp4' }];
         await this.downloadVideo(reelUrl, tempFilePath);
       }
 
-      if (!this.fileManager) {
-        throw new Error('GoogleAIFileManager is not initialized.');
-      }
+      console.log('[AI] Media downloaded. Encoding files and generating structured note via MeshAPI...');
 
-      // Upload files to Google AI Storage
-      for (let i = 0; i < mediaFiles.length; i++) {
-        const media = mediaFiles[i];
-        console.log(`[GEMINI] Uploading media chunk ${i + 1}/${mediaFiles.length} (${media.mimeType}) to Google AI File API...`);
-        
-        const uploadResult = await this.fileManager.uploadFile(media.path, {
-          mimeType: media.mimeType,
-          displayName: `${baseName}_${i}`,
-        });
-
-        // Wait for processing only if video. Images are active instantly.
-        let isVideo = media.mimeType.startsWith('video/');
-        let file = await this.fileManager.getFile(uploadResult.file.name);
-        
-        if (isVideo) {
-          let attempts = 0;
-          while (file.state === 'PROCESSING' && attempts < 20) {
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            file = await this.fileManager.getFile(uploadResult.file.name);
-            attempts++;
-          }
-          if (file.state !== 'ACTIVE') {
-            throw new Error(`Video processing failed on Gemini server. State: ${file.state}`);
-          }
-        }
-        
-        uploadedFiles.push({
-          name: uploadResult.file.name,
-          uri: uploadResult.file.uri,
-          mimeType: media.mimeType
-        });
-      }
-
-      if (uploadedFiles.length === 0) {
-        throw new Error('All media file uploads to Gemini failed.');
-      }
-
-      console.log('[GEMINI] Media uploads active. Generating structured note...');
-
-      const model = this.genAI.getGenerativeModel({
-        model: GEMINI_MODEL,
-        safetySettings,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: responseSchema
-        }
-      });
-
+      const content = [];
       let prompt = `You are a professional video and image analyzer and transcription assistant.
       Analyze the shared Instagram media files (which may contain one or multiple photos/videos) and extract the following:
       1. Title: Create a concise, clean, search-friendly title of what the shared post teaches (exclude hashtag symbols, emojis, and social media clutter).
@@ -297,28 +243,52 @@ class GeminiHandler {
         prompt += `\n\nAdditional Context / Post Caption Text:\n"""\n${caption}\n"""`;
       }
 
-      const contentsList = [];
-      for (const f of uploadedFiles) {
-        contentsList.push({
-          fileData: {
-            mimeType: f.mimeType,
-            fileUri: f.uri
+      content.push({ type: 'text', text: prompt });
+
+      // Encode media files as base64 and attach to content
+      for (const media of mediaFiles) {
+        if (fs.existsSync(media.path)) {
+          // Skip video files to avoid 413 Payload Too Large and format issues on standard completions API
+          if (media.mimeType.startsWith('video/')) {
+            console.log(`[AI] Skipping base64 encoding for video file: ${media.path} to avoid payload size errors.`);
+            continue;
           }
-        });
+          // Skip images larger than 5MB
+          const stats = fs.statSync(media.path);
+          const limitBytes = 5 * 1024 * 1024;
+          if (stats.size > limitBytes) {
+            console.warn(`[AI] Image file too large (${(stats.size / 1024 / 1024).toFixed(1)}MB), skipping to prevent payload size errors: ${media.path}`);
+            continue;
+          }
+
+          const base64Data = fs.readFileSync(media.path, { encoding: 'base64' });
+          content.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${media.mimeType};base64,${base64Data}`
+            }
+          });
+        }
       }
-      contentsList.push({ text: prompt });
 
-      const result = await this.withTimeout(
-        model.generateContent(contentsList),
-        API_TIMEOUT_MS
-      );
+      const messages = [
+        { role: 'user', content: content }
+      ];
 
-      const responseText = result.response.text();
-      console.log('[GEMINI] Received structured JSON response');
-      return JSON.parse(responseText);
+      const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
+        model: GEMINI_MODEL,
+        messages: messages,
+        response_format: { type: 'json_object' }
+      }, API_TIMEOUT_MS);
+
+      const responseText = response.data.choices[0].message.content;
+      console.log('[AI] Received structured JSON response from MeshAPI');
+      
+      const cleanedJson = this.cleanJsonText(responseText);
+      return JSON.parse(cleanedJson);
 
     } catch (error) {
-      console.error('[GEMINI] Media analysis or transcription failed:', error.message);
+      console.error('[AI] Media analysis or transcription failed:', error.message);
       
       const isDownloadFailure = error.message.includes('Invalid content type') || 
                                 error.message.includes('status code 401') || 
@@ -328,23 +298,14 @@ class GeminiHandler {
                                 error.message.includes('login failed');
 
       if (retries > 0 && !isDownloadFailure) {
-        console.log(`[GEMINI] Retrying transcription... (${retries} attempts left)`);
+        console.log(`[AI] Retrying transcription... (${retries} attempts left)`);
         await new Promise((resolve) => setTimeout(resolve, 3000));
         return this.transcribeReel(instagramId, reelUrl, captionText, retries - 1);
       }
 
       if (caption && caption.trim().length > 0) {
-        console.log('[GEMINI] Falling back to caption-only analysis...');
+        console.log('[AI] Falling back to caption-only analysis...');
         try {
-          const model = this.genAI.getGenerativeModel({
-            model: GEMINI_MODEL,
-            safetySettings,
-            generationConfig: {
-              responseMimeType: 'application/json',
-              responseSchema: responseSchema
-            }
-          });
-
           const prompt = `You are a professional content analysis assistant.
           Analyze the caption text of an Instagram Reel shared by the user:
           Reel URL: ${reelUrl}
@@ -362,30 +323,24 @@ class GeminiHandler {
 
           Format the output as a structured JSON object according to the response schema.`;
 
-          const result = await this.withTimeout(
-            model.generateContent(prompt),
-            API_TIMEOUT_MS
-          );
+          const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
+            model: GEMINI_MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            response_format: { type: 'json_object' }
+          }, API_TIMEOUT_MS);
 
-          const responseText = result.response.text();
-          console.log('[GEMINI] Caption analysis completed successfully');
-          return JSON.parse(responseText);
+          const responseText = response.data.choices[0].message.content;
+          console.log('[AI] Caption analysis completed successfully');
+          
+          const cleanedJson = this.cleanJsonText(responseText);
+          return JSON.parse(cleanedJson);
         } catch (fallbackError) {
-          console.error('[GEMINI] Caption fallback analysis also failed:', fallbackError.message);
+          console.error('[AI] Caption fallback analysis also failed:', fallbackError.message);
         }
       }
 
       throw error;
     } finally {
-      // Clean up files from Google AI File storage
-      for (const f of uploadedFiles) {
-        if (f && f.name) {
-          console.log(`[GEMINI] Cleaning up file from AI storage: ${f.name}...`);
-          await this.fileManager.deleteFile(f.name).catch(err => {
-            console.warn('[GEMINI] Error deleting file from AI storage:', err.message);
-          });
-        }
-      }
       // Clean up local temp downloaded files
       for (const media of mediaFiles) {
         if (media && media.path && fs.existsSync(media.path)) {
@@ -396,72 +351,14 @@ class GeminiHandler {
   }
 
   async generateChatResponse(userTimetable, chatHistory, latestInput, userBlockers = []) {
-    if (!this.genAI) {
+    if (!this.apiKey) {
       return JSON.stringify({
-        reply: "I can't chat right now because the Gemini API is not configured. Please add GEMINI_API_KEY in settings.",
+        reply: "I can't chat right now because the Mesh API is not configured. Please add MESH_API_KEY in settings.",
         action: "none"
       });
     }
 
-    const responseSchema = {
-      type: 'OBJECT',
-      properties: {
-        thought: {
-          type: 'STRING',
-          description: 'Your internal reasoning, chain of thought, or step-by-step logic to determine the correct action and conversational reply. REQUIRED.'
-        },
-        reply: { 
-          type: 'STRING', 
-          description: 'Your conversational text response back to the user in DMs.' 
-        },
-        action: { 
-          type: 'STRING', 
-          enum: ['add_timetable', 'clear_timetable', 'add_reminder', 'clear_reminders', 'add_deadline', 'clear_deadlines', 'create_note', 'none'],
-          description: 'Detect if the user requested an action. Select appropriate action, or none.' 
-        },
-        actionData: {
-          type: 'OBJECT',
-          properties: {
-            day: { type: 'STRING', description: 'Day of week for add_timetable action, e.g. Monday. REQUIRED if action is add_timetable.' },
-            time: { type: 'STRING', description: 'Time of day in 24h format, e.g. 14:00. Optional.' },
-            activity: { type: 'STRING', description: 'Activity/topic description. REQUIRED if action is add_timetable.' },
-            notes: { type: 'STRING', description: 'Additional notes. Optional.' },
-            reminderActivity: { type: 'STRING', description: 'Activity/alert description to remind about. REQUIRED if action is add_reminder.' },
-            reminderTime: { type: 'STRING', description: 'Target date/time in ISO-8601 UTC format, e.g. 2026-07-06T15:00:00Z. Calculated relative to the current time context. REQUIRED if action is add_reminder.' },
-            reminderRepeat: { type: 'STRING', enum: ['none', 'daily', 'weekly'], description: 'Repeat frequency. Optional.' },
-            deadlineName: { type: 'STRING', description: 'Name of the task/milestone/deadline. REQUIRED if action is add_deadline.' },
-            deadlineEndDate: { type: 'STRING', description: 'Target end date in ISO-8601 UTC format or relative format (e.g. 5d). REQUIRED if action is add_deadline.' },
-            noteTitle: { type: 'STRING', description: 'Title of the custom note. REQUIRED if action is create_note.' },
-            noteSummary: { type: 'STRING', description: 'Detailed content body/summary of the custom note. REQUIRED if action is create_note.' },
-            noteCategory: { type: 'STRING', enum: ['study', 'project', 'resource', 'tips', 'other'], description: 'Category of the note. REQUIRED if action is create_note.' },
-            noteResources: {
-              type: 'ARRAY',
-              items: {
-                type: 'OBJECT',
-                properties: {
-                  name: { type: 'STRING', description: 'Resource name' },
-                  type: { type: 'STRING', description: 'Resource type' },
-                  description: { type: 'STRING', description: 'Resource description' }
-                },
-                required: ['name']
-              }
-            }
-          }
-        }
-      },
-      required: ['thought', 'reply', 'action']
-    };
-
     try {
-      const model = this.genAI.getGenerativeModel({ 
-        model: GEMINI_MODEL,
-        safetySettings,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: responseSchema
-        }
-      });
-      
       const timetableStr = userTimetable && userTimetable.length > 0 
         ? userTimetable.map(act => `- [${act.day} ${act.time || 'Anytime'}] ${act.activity} (Notes: ${act.notes || 'none'})`).join('\n')
         : 'No scheduled activities in the weekly timetable.';
@@ -509,29 +406,32 @@ class GeminiHandler {
 
       Note: If the user says "!notes", "!deadline", "!timetable", or "!reminders", those are handled by command files. If they type natural messages asking you to add, set, clear, or save these things, trigger the corresponding action!`;
 
-      const contents = [
-        { role: 'user', parts: [{ text: systemPrompt }] },
+      const messages = [
+        { role: 'system', content: systemPrompt }
       ];
 
       if (chatHistory && Array.isArray(chatHistory)) {
         chatHistory.slice(-5).forEach(msg => {
-          contents.push({
-            role: msg.role,
-            parts: [{ text: msg.text }]
+          const role = msg.role === 'model' ? 'assistant' : msg.role;
+          messages.push({
+            role: role,
+            content: msg.text
           });
         });
       }
 
-      contents.push({ role: 'user', parts: [{ text: latestInput }] });
+      messages.push({ role: 'user', content: latestInput });
 
-      const result = await this.withTimeout(
-        model.generateContent({ contents }),
-        API_TIMEOUT_MS
-      );
+      const response = await this.postWithTimeout('https://api.meshapi.ai/v1/chat/completions', {
+        model: GEMINI_MODEL,
+        messages: messages,
+        response_format: { type: 'json_object' }
+      }, API_TIMEOUT_MS);
       
-      return result.response.text();
+      const responseText = response.data.choices[0].message.content;
+      return responseText;
     } catch (error) {
-      console.error('[GEMINI] Chat model error:', error);
+      console.error('[AI] Chat model error:', error);
       return JSON.stringify({
         reply: "Sorry, I had a brief brain freeze while thinking of a response! 🧠❄️ Please try again.",
         action: "none"
@@ -540,4 +440,4 @@ class GeminiHandler {
   }
 }
 
-module.exports = GeminiHandler;
+module.exports = AIHandler;

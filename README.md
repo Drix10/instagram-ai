@@ -47,11 +47,11 @@ graph TD
     B -->|handleMessage| D[instagramClient.processMessage]
     D -->|CoreClient.js| E[handlers/MessageHandler.js]
     E -->|User Message Queue| F{Is Command or Reel?}
-    F -->|Reel URL| G[handlers/GeminiHandler.js]
+    F -->|Reel URL| G[handlers/AIHandler.js]
     F -->|Command/Postback| H[handlers/CommandHandler.js]
-    F -->|Chat Message| I[handlers/GeminiHandler.js chatbot]
+    F -->|Chat Message| I[handlers/AIHandler.js chatbot]
     G -->|Download Video| J[utils/instagram-downloader.js]
-    G -->|Upload & Transcribe| K[Gemini 3.5 Flash API]
+    G -->|Upload & Transcribe| K[MeshAPI: Gemini 3.5 Flash]
     G -->|Save Results| L[(MongoDB: ReelNote / User)]
     H -->|Execute| M[commands/ / buttons/]
     M -->|Query/Update| L

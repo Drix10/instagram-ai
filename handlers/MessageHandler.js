@@ -116,7 +116,7 @@ class MessageHandler {
           }
         }
 
-        const parsed = await this.client.geminiHandler.transcribeReel(instagramId, message.reelUrl, reelCaptionText);
+        const parsed = await this.client.aiHandler.transcribeReel(instagramId, message.reelUrl, reelCaptionText);
         
         const note = new ReelNote({
           instagramId,
@@ -209,7 +209,7 @@ class MessageHandler {
 
     if (text.length > 0) {
       try {
-        const response = await this.client.geminiHandler.generateChatResponse(
+        const response = await this.client.aiHandler.generateChatResponse(
           user.timetable,
           [], 
           text,

@@ -13,10 +13,6 @@ module.exports = {
       const instagramId = message.sender.id;
       const user = await User.findOne({ instagramId });
 
-      if (!user) {
-        return client.sendMessage(instagramId, 'You need to be registered first! Send !register to get started.');
-      }
-
       if (args.length > 0 && args[0].toLowerCase() === 'clear') {
         user.timetable = [];
         await user.save();

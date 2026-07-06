@@ -12,7 +12,6 @@ module.exports = {
     const helpMessage = 
       `📚 【LEARNING MANAGER COMMANDS】 📚\n\n` +
       `Here is a list of commands you can run:\n\n` +
-      `• ${prefix}register - Register your profile\n` +
       `• ${prefix}timetable - View your weekly study/learning timetable\n` +
       `• ${prefix}timetable clear - Clear all items from your timetable\n` +
       `• ${prefix}notes - List your saved Reel notes & resources\n` +

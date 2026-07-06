@@ -75,7 +75,6 @@ graph TD
 
 All commands are prefixed with the bot's configured prefix (default: `!`).
 
-* `!register` – Set up a user profile in the database.
 * `!timetable [clear]` – Display your weekly study schedule or wipe it clean.
 * `!notes [view <index>]` – List saved learning resources or view a specific summary in detail.
 * `!reminders [clear]` – View scheduled study alerts or cancel all notifications.

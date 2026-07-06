@@ -126,31 +126,107 @@ class ApiHandler {
     }
   }
 
+  splitText(text, limit = 1000) {
+    if (limit <= 0) {
+      limit = 1000;
+    }
+    if (text.length <= limit) return [text];
+    
+    const chunks = [];
+    let currentChunk = "";
+    
+    const lines = text.split('\n');
+    for (const line of lines) {
+      if (line.length > limit) {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+          currentChunk = "";
+        }
+        let remainingLine = line;
+        while (remainingLine.length > limit) {
+          chunks.push(remainingLine.substring(0, limit));
+          remainingLine = remainingLine.substring(limit);
+        }
+        currentChunk = remainingLine;
+      } else {
+        const nextLength = currentChunk.length + (currentChunk ? 1 : 0) + line.length;
+        if (nextLength > limit) {
+          chunks.push(currentChunk);
+          currentChunk = line;
+        } else {
+          currentChunk += (currentChunk ? '\n' : '') + line;
+        }
+      }
+    }
+    
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+    
+    return chunks;
+  }
+
   async sendMessage(recipientId, text) {
     try {
       const accessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
-      if (!this.client.rateLimiter.canSendMessage() || !accessToken) {
+      if (!accessToken) {
         return false;
       }
 
-      const response = await axios({
-        method: 'POST',
-        url: `https://graph.instagram.com/v21.0/me/messages`,
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
-          recipient: { id: recipientId },
-          message: { text: text }
-        }
-      });
+      const chunks = this.splitText(text, 1000);
+      const sentChunks = [];
+      let lastResponse = null;
 
-      if (response.headers['x-app-usage']) {
-        this.client.rateLimiter.updateFromHeaders(response.headers['x-app-usage']);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+
+        if (!this.client.rateLimiter.canSendMessage()) {
+          const rateError = new Error('Rate limit reached during message transmission');
+          rateError.status = 429;
+          rateError.sentChunks = sentChunks;
+          rateError.unsentChunks = chunks.slice(i);
+          throw rateError;
+        }
+
+        try {
+          lastResponse = await axios({
+            method: 'POST',
+            url: `https://graph.instagram.com/v21.0/me/messages`,
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            data: {
+              recipient: { id: recipientId },
+              message: { text: chunk }
+            }
+          });
+
+          if (lastResponse.headers['x-app-usage']) {
+            this.client.rateLimiter.updateFromHeaders(lastResponse.headers['x-app-usage']);
+          }
+
+          sentChunks.push(chunk);
+
+          if (i < chunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        } catch (postError) {
+          postError.sentChunks = sentChunks;
+          postError.unsentChunks = chunks.slice(i);
+          throw postError;
+        }
       }
 
-      return response.data;
+      if (lastResponse) {
+        const result = lastResponse.data || {};
+        if (typeof result === 'object') {
+          result.sentChunks = sentChunks;
+          result.unsentChunks = [];
+        }
+        return result;
+      }
+      return false;
     } catch (error) {
       console.error('[INSTAGRAM] Error sending message:', error.response?.data || error.message);
       if (error.response && error.response.status === 429) {

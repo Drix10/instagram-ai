@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-const API_TIMEOUT_MS = 35000;
+const API_TIMEOUT_MS = 60000;
 
 const safetySettings = [
   { 
@@ -253,10 +253,15 @@ class GeminiHandler {
         }
       });
 
-      const prompt = `Analyze this Instagram Reel video. Transcribe the spoken text or text overlays. Extract the main educational tips, learning steps, resources, links, or tasks shown. 
-      Format the output as a structured JSON object according to the schema. 
-      If there is resource/learning data, populate resourceDetails. 
-      Provide timetableSuggestions for scheduling this into the user's weekly timetable structure.`;
+      const prompt = `You are a professional video analyzer and transcription assistant.
+      Analyze this Instagram Reel video and extract the following:
+      1. Title: Create a concise, clean, search-friendly title of what the video teaches (exclude hashtag symbols, emojis, and social media clutter).
+      2. Summary: Provide a clean, markdown-formatted summary of the video. Use bullet points and clear section headers to make it easily readable on narrow mobile screens (Instagram DM). Detail the core concepts, step-by-step guides, or voice-overs.
+      3. Category: Select the best match from 'study', 'project', 'resource', 'tips', or 'other'.
+      4. Resources & Links: Extract any specific website links, tools, books, or steps mentioned.
+      5. Timetable Suggestions: Provide logical timetable slots to schedule this study content in the user's weekly timetable structure (recommend a day of week like 'Monday', specify a logical 24h time format like '14:00', and write a clear, active activity description).
+      
+      Format the entire output as a structured JSON object complying with the required response schema.`;
 
       const result = await this.withTimeout(
         model.generateContent([
@@ -303,16 +308,22 @@ class GeminiHandler {
             }
           });
 
-          const prompt = `Analyze the caption text of an Instagram Reel shared by the user.
+          const prompt = `You are a professional content analysis assistant.
+          Analyze the caption text of an Instagram Reel shared by the user:
           Reel URL: ${reelUrl}
           Caption Content:
           """
           ${captionText}
           """
-          Extract the main educational tips, learning steps, resources, links, or tasks described.
-          Format the output as a structured JSON object according to the schema.
-          If there is resource/learning data, populate resourceDetails.
-          Provide timetableSuggestions for scheduling this into the user's weekly timetable structure.`;
+
+          Extract and structure the following details:
+          1. Title: Create a clean, search-friendly title representing the topic (exclude hashtags and social media clutter).
+          2. Summary: Provide a clean, markdown-formatted summary of the key educational tips, learning steps, or resources described in the caption text. Optimize formatting for mobile DMs (clear spacing, lists, bullet points).
+          3. Category: Select the best match from 'study', 'project', 'resource', 'tips', or 'other'.
+          4. Resources & Links: Extract any website links, tools, or references.
+          5. Timetable Suggestions: Recommend logical schedule slots to insert this study content into the user's weekly timetable (day name, time in 24h format like '09:00', and active activity description).
+
+          Format the output as a structured JSON object according to the response schema.`;
 
           const result = await this.withTimeout(
             model.generateContent(prompt),
@@ -353,6 +364,10 @@ class GeminiHandler {
     const responseSchema = {
       type: 'OBJECT',
       properties: {
+        thought: {
+          type: 'STRING',
+          description: 'Your internal reasoning, chain of thought, or step-by-step logic to determine the correct action and conversational reply. REQUIRED.'
+        },
         reply: { 
           type: 'STRING', 
           description: 'Your conversational text response back to the user in DMs.' 
@@ -392,7 +407,7 @@ class GeminiHandler {
           }
         }
       },
-      required: ['reply', 'action']
+      required: ['thought', 'reply', 'action']
     };
 
     try {
@@ -416,7 +431,7 @@ class GeminiHandler {
       const nowStr = new Date().toISOString();
       const localTimeStr = new Date().toLocaleString();
 
-      const systemPrompt = `You are a supportive, knowledgeable AI personal schedule, study helper, and resource assistant. 
+      const systemPrompt = `You are a supportive, knowledgeable AI personal schedule, study helper, and resource assistant named ReeF AI. 
       You help the user stay on track with their learning timetable, deadlines, and notes.
 
       Here is the user's CURRENT WEEKLY TIMETABLE:
@@ -431,7 +446,14 @@ class GeminiHandler {
 
       Role instructions:
       1. Conversational Reply: Address the user's query concisely and helpfully.
-      2. Triggering Actions: If the user indicates they want to schedule a class/activity, set a reminder, add a deadline, clear any schedules, or save/write down notes/facts, determine the correct "action" and parse the relevant arguments into "actionData".
+      2. Mention Commands: You MUST actively inform the user about the prefix commands available to them in the bot when greeting them, showing help, or when you complete/trigger an action for them. Ensure they know how to access their saved details using these prefixes:
+         - When greeting or starting: Mention '!help' to list commands.
+         - When a note is saved (create_note): Remind the user they can view their notes list via '!notes' or detailed notes with '!notes view <index>'.
+         - When a timetable activity is added (add_timetable): Remind the user they can see their weekly routine via '!timetable'.
+         - When a deadline is added (add_deadline): Remind the user they can list their deadlines via '!deadline'.
+         - When a reminder is scheduled (add_reminder): Remind the user they can inspect notifications via '!reminders'.
+      3. Triggering Actions: If the user indicates they want to schedule a class/activity, set a reminder, add a deadline, clear any schedules, or save/write down notes/facts, determine the correct "action" and parse the relevant arguments into "actionData".
+      4. CRITICAL JSON COMPLIANCE: Do not write thoughts, system comments, or formatting explanations inside the 'reply' or any field of 'actionData'. Keep 'actionData' values brief, clean, and containing ONLY the direct raw value (e.g. 'time' must be exactly HH:MM, 'day' must be a simple day name, and 'notes' must be clean text without meta-commentary). All reasoning must reside strictly inside the 'thought' field.
       
       Actions Reference:
       - 'add_timetable': User wants to schedule an activity in their weekly routine. (e.g. "put study math on Monday at 3pm"). Must populate 'day', 'activity', 'time' (if specified).

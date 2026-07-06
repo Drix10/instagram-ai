@@ -242,7 +242,10 @@ class MessageHandler {
             switch (action) {
               case 'add_timetable': {
                 if (actionData.day && actionData.activity) {
-                  const day = actionData.day;
+                  let day = actionData.day.trim();
+                  if (day.length > 0) {
+                    day = day.charAt(0).toUpperCase() + day.slice(1).toLowerCase();
+                  }
                   const time = actionData.time || '';
                   const activity = actionData.activity;
                   const isDuplicate = user.timetable.some(existing => 
@@ -290,10 +293,14 @@ class MessageHandler {
                       existing.time.getTime() === targetTime.getTime()
                     );
                     if (!isDuplicate) {
+                      let repeat = (actionData.reminderRepeat || 'none').toLowerCase().trim();
+                      if (!['none', 'daily', 'weekly'].includes(repeat)) {
+                        repeat = 'none';
+                      }
                       user.reminders.push({
                         activity: reminderActivity,
                         time: targetTime,
-                        repeat: actionData.reminderRepeat || 'none',
+                        repeat: repeat,
                         active: true
                       });
                       await user.save();
@@ -367,13 +374,22 @@ class MessageHandler {
               case 'create_note': {
                 const title = actionData.noteTitle || actionData.title || 'Custom Note';
                 const summary = actionData.noteSummary || actionData.notes || actionData.summary || '';
-                const category = actionData.noteCategory || actionData.category || 'resource';
-                const rawResources = actionData.noteResources || actionData.resources || [];
+                
+                let category = (actionData.noteCategory || actionData.category || 'resource').toLowerCase().trim();
+                const validCategories = ['study', 'project', 'resource', 'tips', 'other'];
+                if (!validCategories.includes(category)) {
+                  category = 'resource';
+                }
+
+                const rawResources = Array.isArray(actionData.noteResources || actionData.resources)
+                  ? (actionData.noteResources || actionData.resources)
+                  : [];
+
                 if (title && summary) {
                   const resourcesFormatted = rawResources.map(r => ({
-                    name: r.name,
-                    type: r.type || 'resource',
-                    description: r.description || ''
+                    name: r ? (r.name || 'Resource') : 'Resource',
+                    type: r ? (r.type || 'resource') : 'resource',
+                    description: r ? (r.description || '') : ''
                   }));
 
                   const note = new ReelNote({

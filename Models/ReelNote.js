@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const ResourceSchema = new mongoose.Schema({
   name: { type: String, required: true },
   type: { type: String },
-  description: { type: String }
+  description: { type: String },
+  url: { type: String }
 });
 
 const TimetableSuggestionSchema = new mongoose.Schema({

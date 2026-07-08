@@ -62,12 +62,14 @@ graph TD
 ---
 
 ## Key Features
-* **Automated Reel Analysis**: Downloads shared Reel videos, transcribes voice/overlays, and maps them to clean markdown summaries.
+* **XMA-Aware Carousel Resolution**: Bypasses Messenger API limitations by using a tiered discovery engine. It directly inspects DM thread metadata and parses modern `xma_media_share` link cards to retrieve and download full 10-slide carousels via the Private API.
+* **Automated Reel Analysis**: Transcribes speech voiceovers using **`openai/whisper-large-v3-turbo`** and compiles visual frames into plain text summaries (excluding markdown, as Instagram DMs do not render it).
+* **Multimodal Visual Analysis**: Bundles direct carousel image uploads and extracted video frames, passing them directly to **`google/gemini-3.5-flash`** for consolidated visual note-taking in a single request.
+* **Proactive Chat Assistant**: Features "ReeF," a conversational AI persona that can proactively trigger actions (setting reminders, adding deadlines, or creating notes) based on natural language intent.
 * **Dynamic Learning Timetable**: Suggests schedule slots for study routines and allows users to modify schedules via interactive commands.
 * **Deadlines & Milestones**: Structures tasks and course deadlines, and triggers automated check-in summaries containing saved resources once deadlines complete.
 * **Active DM Reminders**: Periodically polls user routine times and sends DM notifications to keep study habits active.
 * **VPS Security Bypass**: Direct browser session cookie import bypasses datacenter IP blocks, avoiding password-based blocks on cloud hostings.
-* **Concurrency Control**: Memory-safe sequential user-queues prevent race conditions and MongoDB write collisions.
 
 ---
 
@@ -95,8 +97,9 @@ MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/timetable_bot
 PORT=25655
 TRUST_PROXY=1
 
-# Gemini AI API Configuration
+# AI API Configuration (MeshAPI & Gemini Key)
 GEMINI_API_KEY=AIzaSy...
+MESH_API_KEY=rsk_...
 
 # Instagram Graph API Webhook Configuration
 INSTAGRAM_ACCESS_TOKEN=IGAAQ...
@@ -153,8 +156,8 @@ http://yourdomain.com/ig/session/import?token=your_challenge_token&cookies=mid=a
   ```
 
 The bot will:
-1. Load cookies into a secure, sandboxed tough-cookie jar.
-2. Query Instagram's authenticated `currentUser` endpoint to prove validity.
+1. Load cookies into the Instagram client state.
+2. Check validation credentials. (Even if standard endpoints like `currentUser` return temporary warnings or API errors, the bot will warn but still save the cookies to disk).
 3. Serialize the session state to `.ig-session.json` with owner-only (`0600`) file permissions.
 4. Unblock downloads instantly without needing standard password-based logins.
 

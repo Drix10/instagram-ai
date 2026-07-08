@@ -16,6 +16,9 @@ node_modules/
 # Temp download folder
 temp/
 
+# Gemini
+\!/
+
 # Log files
 npm-debug.log*
 yarn-debug.log*

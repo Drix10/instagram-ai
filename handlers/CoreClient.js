@@ -38,7 +38,7 @@ class CoreClient {
 
       const AIHandler = require('./AIHandler');
       this.aiHandler = new AIHandler(this);
-      this.geminiHandler = this.aiHandler; // Backward compatibility
+      this.geminiHandler = this.aiHandler;
 
       const isValid = await this.apiHandler.verifyToken();
       if (!isValid) {

@@ -1,456 +1,155 @@
-
 const { IgApiClient } = require('instagram-private-api');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
 const SESSION_FILE = path.join(__dirname, '..', '.ig-session.json');
-const MAX_VIDEO_SIZE = 35 * 1024 * 1024; 
+const MAX_VIDEO_SIZE = 35 * 1024 * 1024;
 
 class InstagramDownloader {
   constructor() {
     this.ig = new IgApiClient();
-    
     this.ig.state.constants.APP_VERSION = '331.0.0.37.105';
     this.ig.state.constants.APP_VERSION_CODE = '594611413';
-
     this.isLoggedIn = false;
-    this.loginPromise = null; 
+    this.loginPromise = null;
   }
 
   async login() {
-    
-    if (this.loginPromise) {
-      return this.loginPromise;
-    }
-
+    if (this.loginPromise) return this.loginPromise;
     if (this.isLoggedIn) return;
-
     this.loginPromise = this._doLogin();
-    try {
-      await this.loginPromise;
-    } finally {
-      this.loginPromise = null;
-    }
+    try { await this.loginPromise; } finally { this.loginPromise = null; }
   }
 
   async _doLogin() {
-    const username = process.env.IG_USERNAME;
-    const password = process.env.IG_PASSWORD;
-
-    if (!username || !password) {
-      throw new Error('IG_USERNAME and IG_PASSWORD environment variables are required for reel downloads.');
-    }
-
-    this.ig.state.generateDevice(username);
-
+    const u = process.env.IG_USERNAME;
+    const p = process.env.IG_PASSWORD;
+    if (!u || !p) throw new Error('IG_USERNAME/IG_PASSWORD required.');
+    this.ig.state.generateDevice(u);
     if (fs.existsSync(SESSION_FILE)) {
       try {
-        const savedSession = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-        await this.ig.state.deserialize(savedSession);
-        
+        await this.ig.state.deserialize(JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')));
         await this.ig.account.currentUser();
-        
         this.isLoggedIn = true;
-        console.log('[IG-DL] Session restored successfully');
         return;
       } catch (err) {
-        console.warn(`[IG-DL] Saved session invalid or expired: ${err.message}. Performing fresh login...`);
-        
         try { fs.unlinkSync(SESSION_FILE); } catch (e) {}
       }
     }
+    await this._doFreshLogin(u, p);
+  }
 
+  async _doFreshLogin(u, p) {
     try {
-      console.log(`[IG-DL] Logging in as @${username}...`);
-      
       await this.ig.simulate.preLoginFlow();
-      
-      const loggedInUser = await this.ig.account.login(username, password);
-      console.log(`[IG-DL] Logged in as @${loggedInUser.username} (ID: ${loggedInUser.pk})`);
-
-      try {
-        await this.ig.simulate.postLoginFlow();
-      } catch (e) {
-        
-      }
-
-      const serialized = await this.ig.state.serialize();
-      
-      delete serialized.constants;
-      delete serialized.supportedCapabilities;
-      fs.writeFileSync(SESSION_FILE, JSON.stringify(serialized), { encoding: 'utf8', mode: 0o600 });
-      console.log('[IG-DL] Session saved to disk');
-
+      await this.ig.account.login(u, p);
+      try { await this.ig.simulate.postLoginFlow(); } catch (e) {}
+      const s = await this.ig.state.serialize();
+      delete s.constants; delete s.supportedCapabilities;
+      fs.writeFileSync(SESSION_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
       this.isLoggedIn = true;
     } catch (err) {
       this.isLoggedIn = false;
-      
-      const isCheckpoint = err.name === 'IgCheckpointError' || 
-                           err.name === 'IgChallengeRequiredError' ||
-                           (err.message && (err.message.includes('checkpoint_required') || err.message.includes('challenge_required')));
-
-      console.log(`[IG-DL] Login catch block error name: ${err.name}`);
-      if (err.response) {
-        console.log(`[IG-DL] Response status: ${err.response.statusCode}`);
-        if (err.response.body && typeof err.response.body === 'object') {
-          console.log(`[IG-DL] Response message: ${err.response.body.message || 'None'}`);
-        }
-      }
-
-      if (isCheckpoint) {
-        throw new Error('Instagram checkpoint/verification required. Please import active cookies from your browser via POST /ig/session/import.');
-      }
-
-      if (err.name === 'IgLoginTwoFactorRequiredError') {
-        throw new Error('Instagram 2FA required. Disable 2FA on the download account.');
-      }
-
-      throw new Error(`Instagram login failed: ${err.message}`);
+      if (err.name?.includes('Checkpoint') || err.message?.includes('checkpoint')) throw new Error('Checkpoint required.');
+      throw new Error(`Login failed: ${err.message}`);
     }
+  }
+
+  async getCookieString() {
+    await this.login();
+    return (await this.ig.state.cookieJar.getCookies('https://instagram.com')).map(c => `${c.key}=${c.value}`).join('; ');
   }
 
   extractShortcode(url) {
-    const match = url.match(/\/(reel|reels|p)\/([A-Za-z0-9_-]+)/);
-    return match ? match[2] : null;
+    if (!url) return null;
+    const m = url.match(/\/(reel|reels|p)\/([A-Za-z0-9_-]+)/);
+    return m ? m[2] : null;
   }
 
-  shortcodeToMediaId(shortcode) {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  shortcodeToMediaId(sc) {
+    const a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     let id = BigInt(0);
-    for (const char of shortcode) {
-      id = id * BigInt(64) + BigInt(alphabet.indexOf(char));
-    }
+    for (const c of sc) id = id * BigInt(64) + BigInt(a.indexOf(c));
     return id.toString();
   }
 
-  async resolveVideoUrl(instagramUrl) {
-    await this.login();
-
-    const shortcode = this.extractShortcode(instagramUrl);
-    if (!shortcode) {
-      throw new Error(`Could not extract shortcode from URL: ${instagramUrl}`);
+  async downloadFromUrl(url, target) {
+    const res = await axios({ url, method: 'GET', responseType: 'stream', timeout: 45000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const ct = res.headers['content-type'] || '';
+    if (!ct.startsWith('video/') && !ct.startsWith('image/') && ct !== 'application/octet-stream' && ct !== '') {
+      try { res.data.destroy(); } catch (e) {}
+      throw new Error(`Invalid type: ${ct}`);
     }
-
-    const mediaId = this.shortcodeToMediaId(shortcode);
-    console.log(`[IG-DL] Resolving video URL for shortcode: ${shortcode} (media ID: ${mediaId})`);
-
-    try {
-      const mediaInfo = await this.ig.media.info(mediaId);
-
-      if (!mediaInfo || !mediaInfo.items || mediaInfo.items.length === 0) {
-        throw new Error('No media info returned from Instagram API');
-      }
-
-      const item = mediaInfo.items[0];
-
-      if (item.media_type !== 2) { 
-        throw new Error(`Media is not a video (type: ${item.media_type})`);
-      }
-
-      const videoVersions = item.video_versions;
-      if (!videoVersions || videoVersions.length === 0) {
-        throw new Error('No video versions found in media info');
-      }
-
-      const bestVideo = videoVersions[0];
-      console.log(`[IG-DL] Resolved video URL (${bestVideo.width}x${bestVideo.height})`);
-
-      return {
-        videoUrl: bestVideo.url,
-        width: bestVideo.width,
-        height: bestVideo.height,
-        caption: item.caption ? item.caption.text : '',
-        duration: item.video_duration || 0,
-        author: item.user ? item.user.username : '',
-      };
-    } catch (err) {
-      
-      const isSessionExpired = err.name === 'IgLoginRequiredError' || 
-                               err.name === 'IgCheckpointError' ||
-                               err.name === 'IgChallengeRequiredError' ||
-                               (err.message && (err.message.includes('login_required') || err.message.includes('checkpoint')));
-
-      if (isSessionExpired) {
-        console.warn('[IG-DL] Session expired or checkpoint triggered. Re-logging in...');
-        this.isLoggedIn = false;
-        try { fs.unlinkSync(SESSION_FILE); } catch (e) {}
-        
-        await this.login();
-        
-        const mediaInfo = await this.ig.media.info(mediaId);
-        if (mediaInfo && mediaInfo.items && mediaInfo.items.length > 0) {
-          const item = mediaInfo.items[0];
-          if (item.video_versions && item.video_versions.length > 0) {
-            return {
-              videoUrl: item.video_versions[0].url,
-              width: item.video_versions[0].width,
-              height: item.video_versions[0].height,
-              caption: item.caption ? item.caption.text : '',
-              duration: item.video_duration || 0,
-              author: item.user ? item.user.username : '',
-            };
-          }
-        }
-      }
-      
-      throw new Error(`Failed to resolve video URL: ${err.message}`);
-    }
-  }
-
-  async downloadFromUrl(videoUrl, targetPath) {
-    console.log(`[IG-DL] Downloading media to: ${path.basename(targetPath)}`);
-
-    const response = await axios({
-      url: videoUrl,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 45000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      },
-    });
-
-    const contentType = response.headers['content-type'] || '';
-    const isValidType = contentType.startsWith('video/') || contentType.startsWith('image/') || contentType === 'application/octet-stream' || contentType === '';
-    if (!isValidType) {
-      try { response.data.destroy(); } catch (e) {}
-      throw new Error(`Invalid content type: "${contentType}" (expected video/image)`);
-    }
-
-    const contentLength = parseInt(response.headers['content-length'], 10);
-    if (!isNaN(contentLength) && contentLength > MAX_VIDEO_SIZE) {
-      try { response.data.destroy(); } catch (e) {}
-      throw new Error(`Media too large: ${(contentLength / 1024 / 1024).toFixed(1)}MB (limit: ${MAX_VIDEO_SIZE / 1024 / 1024}MB)`);
-    }
-
     return new Promise((resolve, reject) => {
-      const writer = fs.createWriteStream(targetPath);
-      let bytesWritten = 0;
-      let finished = false;
-
-      let timeout;
-
-      const cleanup = (err) => {
-        if (finished) return;
-        finished = true;
-        if (timeout) clearTimeout(timeout);
-        try { writer.destroy(); } catch (e) {}
-        try { response.data.destroy(); } catch (e) {}
-        if (err) {
-          fs.unlink(targetPath, () => {});
-          reject(err);
-        }
-      };
-
-      timeout = setTimeout(() => {
-        cleanup(new Error('Download timeout (45s)'));
-      }, 45000);
-
-      response.data.on('data', (chunk) => {
-        bytesWritten += chunk.length;
-        if (bytesWritten > MAX_VIDEO_SIZE) {
-          cleanup(new Error('Media exceeded size limit during download'));
-        }
-      });
-
-      response.data.pipe(writer);
-
-      writer.on('finish', () => {
-        if (finished) return;
-        finished = true;
-        if (timeout) clearTimeout(timeout);
-
-        try {
-          const stats = fs.statSync(targetPath);
-          if (stats.size < 100) {
-            fs.unlinkSync(targetPath);
-            reject(new Error('Downloaded file too small to be a valid media file'));
-            return;
-          }
-          console.log(`[IG-DL] Download complete: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
-          resolve();
-        } catch (e) {
-          reject(new Error(`Failed to verify download: ${e.message}`));
-        }
-      });
-
-      writer.on('error', (err) => {
-        cleanup(new Error(`Write error: ${err.message}`));
-      });
-
-      response.data.on('error', (err) => {
-        cleanup(new Error(`Stream error: ${err.message}`));
-      });
-
+      const w = fs.createWriteStream(target);
+      let bw = 0, f = false;
+      const clean = (err) => { if (f) return; f = true; try { w.destroy(); } catch (e) {} try { res.data.destroy(); } catch (e) {} if (err) { try { fs.unlinkSync(target); } catch (e) {} reject(err); } };
+      res.data.on('data', (c) => { bw += c.length; if (bw > MAX_VIDEO_SIZE) clean(new Error('Exceeded limit')); });
+      res.data.pipe(w);
+      w.on('finish', () => { if (f) return; f = true; resolve(); });
+      w.on('error', clean); res.data.on('error', clean);
     });
   }
 
-  async resolveMediaItems(instagramUrl) {
+  async resolveMediaItems(url) {
     await this.login();
-
-    const shortcode = this.extractShortcode(instagramUrl);
-    if (!shortcode) {
-      throw new Error(`Could not extract shortcode from URL: ${instagramUrl}`);
-    }
-
-    const mediaId = this.shortcodeToMediaId(shortcode);
-    console.log(`[IG-DL] Resolving media info for shortcode: ${shortcode} (media ID: ${mediaId})`);
-
-    const extractItems = (mediaInfo) => {
-      const item = mediaInfo.items[0];
-      const caption = item.caption ? item.caption.text : '';
-      const author = item.user ? item.user.username : '';
-      
-      const itemsList = [];
+    const sc = this.extractShortcode(url);
+    if (!sc) throw new Error('No shortcode');
+    const mid = sc.match(/^\d{15,}$/) ? sc : this.shortcodeToMediaId(sc);
+    const extract = (info) => {
+      const item = info.items[0], list = [];
       if (item.media_type === 8 && item.carousel_media) {
-        for (const sub of item.carousel_media.slice(0, 10)) {
-          if (sub.media_type === 2 && sub.video_versions && sub.video_versions.length > 0) {
-            itemsList.push({ type: 'video', url: sub.video_versions[0].url, mimeType: 'video/mp4' });
-          } else if (sub.media_type === 1 && sub.image_versions2 && sub.image_versions2.candidates && sub.image_versions2.candidates.length > 0) {
-            itemsList.push({ type: 'image', url: sub.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
-          }
+        for (const s of item.carousel_media.slice(0, 10)) {
+          if (s.media_type === 2) list.push({ type: 'video', url: s.video_versions[0].url, mimeType: 'video/mp4' });
+          else list.push({ type: 'image', url: s.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
         }
-      } else if (item.media_type === 2 && item.video_versions && item.video_versions.length > 0) {
-        itemsList.push({ type: 'video', url: item.video_versions[0].url, mimeType: 'video/mp4' });
-      } else if (item.media_type === 1 && item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates.length > 0) {
-        itemsList.push({ type: 'image', url: item.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
-      }
-
-      return {
-        items: itemsList,
-        caption,
-        author
-      };
+      } else if (item.media_type === 2) list.push({ type: 'video', url: item.video_versions[0].url, mimeType: 'video/mp4' });
+      else if (item.media_type === 1) list.push({ type: 'image', url: item.image_versions2.candidates[0].url, mimeType: 'image/jpeg' });
+      return { items: list, caption: item.caption?.text || '', author: item.user?.username || '' };
     };
-
     try {
-      const mediaInfo = await this.ig.media.info(mediaId);
-      if (!mediaInfo || !mediaInfo.items || mediaInfo.items.length === 0) {
-        throw new Error('No media info returned from Instagram API');
-      }
-      return extractItems(mediaInfo);
+      const info = await this.ig.media.info(mid);
+      if (!info || !info.items || info.items.length === 0) throw new Error('No info');
+      return extract(info);
     } catch (err) {
-      const isSessionExpired = err.name === 'IgLoginRequiredError' || 
-                               err.name === 'IgCheckpointError' ||
-                               err.name === 'IgChallengeRequiredError' ||
-                               (err.message && (err.message.includes('login_required') || err.message.includes('checkpoint')));
-
-      if (isSessionExpired) {
-        console.warn('[IG-DL] Session expired or checkpoint triggered. Re-logging in...');
-        this.isLoggedIn = false;
-        try { fs.unlinkSync(SESSION_FILE); } catch (e) {}
-        
+      const errMsg = err?.message || '';
+      if (errMsg.includes('login_required') || errMsg.includes('checkpoint')) {
+        this.isLoggedIn = false; try { fs.unlinkSync(SESSION_FILE); } catch (e) {}
         await this.login();
-        
-        const mediaInfo = await this.ig.media.info(mediaId);
-        if (mediaInfo && mediaInfo.items && mediaInfo.items.length > 0) {
-          return extractItems(mediaInfo);
-        }
-      }
-      throw new Error(`Failed to resolve media info: ${err.message}`);
-    }
-  }
-
-  async downloadMedia(instagramUrl, targetDir, baseName) {
-    const resolved = await this.resolveMediaItems(instagramUrl);
-    const downloadedFiles = [];
-
-    try {
-      for (let i = 0; i < resolved.items.length; i++) {
-        const item = resolved.items[i];
-        const ext = item.type === 'video' ? 'mp4' : 'jpg';
-        const filePath = path.join(targetDir, `${baseName}_${i}.${ext}`);
-        
-        console.log(`[IG-DL] Downloading item ${i + 1}/${resolved.items.length} (${item.type})`);
-        await this.downloadFromUrl(item.url, filePath);
-        
-        downloadedFiles.push({
-          path: filePath,
-          mimeType: item.mimeType
-        });
-      }
-
-      return {
-        mediaFiles: downloadedFiles,
-        caption: resolved.caption,
-        author: resolved.author
-      };
-    } catch (err) {
-      console.error(`[IG-DL] downloadMedia failed, cleaning up partial downloads...`);
-      for (const file of downloadedFiles) {
-        try {
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
-        } catch (unlinkErr) {}
+        const info2 = await this.ig.media.info(mid);
+        if (!info2 || !info2.items || info2.items.length === 0) throw new Error('No info on second attempt');
+        return extract(info2);
       }
       throw err;
     }
   }
 
-  async downloadReel(instagramUrl, targetPath) {
-    const resolved = await this.resolveVideoUrl(instagramUrl);
-    await this.downloadFromUrl(resolved.videoUrl, targetPath);
-    
-    return {
-      videoUrl: resolved.videoUrl,
-      targetPath,
-      caption: resolved.caption,
-      author: resolved.author,
-      duration: resolved.duration,
-      width: resolved.width,
-      height: resolved.height,
-    };
+  async downloadMedia(url, dir, base) {
+    const res = await this.resolveMediaItems(url);
+    const files = [];
+    try {
+      for (let i = 0; i < res.items.length; i++) {
+        const item = res.items[i];
+        const p = path.join(dir, `${base}_${i}.${item.type === 'video' ? 'mp4' : 'jpg'}`);
+        await this.downloadFromUrl(item.url, p);
+        files.push({ path: p, mimeType: item.mimeType });
+      }
+      return { mediaFiles: files, caption: res.caption, author: res.author };
+    } catch (err) { for (const f of files) try { fs.unlinkSync(f.path); } catch (e) {} throw err; }
   }
 
   async importCookies(cookieString) {
-    if (!cookieString || cookieString.trim() === '') {
-      throw new Error('Cookie string cannot be empty');
+    const u = process.env.IG_USERNAME; if (!u) throw new Error('IG_USERNAME missing');
+    this.ig.state.generateDevice(u);
+    for (const part of decodeURIComponent(cookieString).split(';')) {
+      const t = part.trim(); if (t) try { await this.ig.state.cookieJar.setCookie(`${t}; Domain=.instagram.com; Path=/; Secure; HttpOnly`, 'https://instagram.com'); } catch (e) {}
     }
-
-    const username = process.env.IG_USERNAME;
-    if (!username) {
-      throw new Error('IG_USERNAME must be configured in .env');
-    }
-
-    console.log(`[IG-DL] Importing browser cookies for @${username}...`);
-    this.ig.state.generateDevice(username);
-
-    const decodedCookies = decodeURIComponent(cookieString);
-
-    const parts = decodedCookies.split(';');
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      try {
-        await this.ig.state.cookieJar.setCookie(
-          `${trimmed}; Domain=.instagram.com; Path=/; Secure; HttpOnly`,
-          'https://instagram.com'
-        );
-      } catch (cookieErr) {
-        console.warn(`[IG-DL] Failed to set cookie part "${trimmed}":`, cookieErr.message);
-      }
-    }
-
-    try {
-      console.log('[IG-DL] Verifying imported session via currentUser...');
-      const currentUser = await this.ig.account.currentUser();
-      console.log(`[IG-DL] Session verified! Logged in as: @${currentUser.username} (ID: ${currentUser.pk})`);
-
-      const serialized = await this.ig.state.serialize();
-      delete serialized.constants;
-      delete serialized.supportedCapabilities;
-      fs.writeFileSync(SESSION_FILE, JSON.stringify(serialized), { encoding: 'utf8', mode: 0o600 });
-
-      this.isLoggedIn = true;
-      console.log('[IG-DL] Session state serialized and saved to disk.');
-
-      return { status: 'success', username: username, message: 'Cookies imported and verified successfully!' };
-    } catch (err) {
-      console.error('[IG-DL] Failed to verify imported cookies:', err.message);
-      throw new Error(`Cookies verification failed: ${err.message}. Make sure you copied the correct cookies and are logged in.`);
-    }
+    const s = await this.ig.state.serialize();
+    delete s.constants; delete s.supportedCapabilities;
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
+    this.isLoggedIn = true;
+    return { status: 'success', username: u };
   }
 }
 
